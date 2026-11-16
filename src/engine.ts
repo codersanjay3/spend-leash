@@ -5,6 +5,7 @@ import { loadConfig } from "./config-load.js";
 import { type Effect, HANDOFF_PLACEHOLDER, type StepEnv, step, stopOutput } from "./engine-core.js";
 import {
   gitInfo,
+  lastAssistantMessage,
   lastTodos,
   markConsumed,
   pendingHandoff,
@@ -131,15 +132,14 @@ export function runEngine(ctx: Ctx, input: HookInput): HookResult {
           const tail = readTail(transcript);
           const g = Date.now() - started < GIT_BUDGET_MS ? gitInfo(cwd) : undefined;
           const todos = lastTodos(tail);
+          const lastAssistant = input.last_assistant_message ?? lastAssistantMessage(tail);
           const md = renderHandoff({
             reason: e.reason,
             detail: e.detail,
             ...(next.task ? { task: next.task } : {}),
             sessionId: sid,
             cwd,
-            ...(input.last_assistant_message !== undefined
-              ? { lastAssistant: input.last_assistant_message }
-              : {}),
+            ...(lastAssistant !== undefined ? { lastAssistant } : {}),
             recentCalls: recentToolCalls(tail),
             ...(todos ? { todos } : {}),
             ...(g ? { git: g } : {}),

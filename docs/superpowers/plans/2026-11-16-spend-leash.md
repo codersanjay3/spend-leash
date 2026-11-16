@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-16-spend-leash-design.md` — read it before any task.
 
-**Reference repo (read-only):** `the mcp-leash repo (github.com/codersanjay3/mcp-leash)`. Port, don't import.
+**Reference repo (read-only):** the sibling repo mcp-leash (github.com/codersanjay3/mcp-leash). Port, don't import.
 
 ## Global Constraints
 
@@ -166,7 +166,7 @@
 - Messages (exact copy):
   - budget stop: `spend-leash: task budget $<limit> reached ($<spent>). Handoff: <path>. Reply "#budget +$<limit>" to continue this task or "#budget new" to start fresh.`
   - plan stop: `spend-leash: 5-hour plan window at <pct>% (stop at <stopAt>%). Handoff: <path>. Resets <local time>. Reply "#budget plan-off" to keep going.`
-  - loop stop: `spend-leash: the same <tool> call ran <n> times in a row; stopping to avoid a loop. Handoff: <path>.`
+  - loop stop: `spend-leash: the same <tool> call ran <n> times in the last <window> calls; stopping to avoid a loop. Handoff: <path>.`
   - warn: `spend-leash: <pct>% of this task's budget used ($<spent> of $<limit>). Finish the current step, then stop and summarize what is left.`
   - loop warn: `spend-leash: you have run this exact <tool> call <n> times; the result will not change. Try a different approach, or stop and explain what is blocking you.`
 

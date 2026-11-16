@@ -142,3 +142,22 @@ export function lastTodosFrom(records: unknown[]): string[] | undefined {
   }
   return undefined;
 }
+
+/** Text of the last assistant message's last `text` block; undefined when there is none. */
+export function lastAssistantText(records: unknown[]): string | undefined {
+  for (let i = records.length - 1; i >= 0; i--) {
+    const r = records[i];
+    if (!isObj(r) || !isObj(r.message)) continue;
+    if (r.type !== "assistant" && r.message.role !== "assistant") continue;
+    const c = r.message.content;
+    if (typeof c === "string") return c || undefined;
+    if (!Array.isArray(c)) continue;
+    for (let j = c.length - 1; j >= 0; j--) {
+      const b = c[j];
+      if (isObj(b) && b.type === "text" && typeof b.text === "string" && b.text.trim()) {
+        return b.text;
+      }
+    }
+  }
+  return undefined;
+}

@@ -213,7 +213,7 @@ subagent-inclusive spend and an automatic resume.
 
 ### Failure behaviour
 
-- Any exception, unreadable transcript, or 800 ms self-watchdog → fail open (exit 0, no output), log one
+- Any exception, unreadable transcript, or 1500 ms self-watchdog (raised from 800 ms during the build so stop paths that run git finish) → fail open (exit 0, no output), log one
   line to `~/.spend-leash/errors.log`. `failClosed: true` makes budget errors deny instead.
 - Concurrency: hooks for parallel subagents may run at once → per-session state written atomically with a
   short lock (mkdir lock, 200 ms max wait, then proceed read-only).

@@ -271,9 +271,38 @@ describe("engine", () => {
     pre("Bash", same);
     const stop = pre("Bash", same);
     expect(stop.json?.stopReason).toMatch(
-      /^spend-leash: the same Bash call ran 5 times in a row; stopping to avoid a loop\. Handoff: .+\.$/,
+      /^spend-leash: the same Bash call ran 5 times in the last \d+ calls; stopping to avoid a loop\. Handoff: .+\.$/,
     );
     expect(task()?.outcome).toBe("stopped-loop");
+  });
+
+  it("budget stop on PreToolUse fills 'Where it stopped' from the transcript tail", () => {
+    prompt("go");
+    spend(2.5);
+    appendFileSync(
+      transcript,
+      `${JSON.stringify({
+        type: "assistant",
+        message: {
+          id: "msg_last",
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: "Halfway through the migration, token=sk-ant-abcdefghijklmnop1234",
+            },
+            { type: "tool_use", id: "tu1", name: "Bash", input: { command: "ls" } },
+          ],
+        },
+      })}\n`,
+    );
+    const r = pre();
+    expect(r.json?.stopReason).toContain("budget");
+    const dir = join(cwd, ".spend-leash", "handoffs");
+    const md = readFileSync(join(dir, readdirSync(dir)[0] as string), "utf8");
+    const section = md.split("## Where it stopped")[1] ?? "";
+    expect(section).toContain("Halfway through the migration");
+    expect(section).not.toContain("sk-ant-abcdefghijklmnop1234");
   });
 
   it("PostToolUseFailure makes a repeating failure count double", () => {

@@ -224,7 +224,7 @@ function check(
 
   // Loop stop.
   if (verdict === "stop") {
-    const msg = `spend-leash: the same ${tool} call ran ${loopCount} times in a row; stopping to avoid a loop. Handoff: ${hand}.`;
+    const msg = `spend-leash: the same ${tool} call ran ${loopCount} times in the last ${cfg.loop.window} calls; stopping to avoid a loop. Handoff: ${hand}.`;
     return stop("stopped-loop", "loop", msg, `${tool} x${loopCount}`);
   }
 

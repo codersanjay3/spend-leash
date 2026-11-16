@@ -104,6 +104,23 @@ describe("init", () => {
     });
   });
 
+  it("keeps every user statusLine key on the wrapper and restores byte-identically", () => {
+    const text =
+      '{"statusLine":{"type":"command","command":"echo hi","padding":1,"refreshInterval":5}}\n';
+    put(userFile(), text);
+    init();
+    expect(json(userFile()).statusLine).toEqual({
+      type: "command",
+      command: statusLineCommand(ctx.leashHome),
+      padding: 1,
+      refreshInterval: 5,
+    });
+    const again = planInstall(ctx, { scope: "user", project: proj });
+    expect(again.changes).toEqual([]);
+    uninstall();
+    expect(rd(userFile())).toBe(text);
+  });
+
   it("wraps the project-local statusLine even with --scope user", () => {
     put(userFile(), JSON.stringify({ statusLine: { type: "command", command: "user.sh" } }));
     put(localFile(), JSON.stringify({ statusLine: { type: "command", command: "local.sh" } }));

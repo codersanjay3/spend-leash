@@ -169,7 +169,7 @@ function sleep(ms: number): void {
 }
 
 /**
- * Serialises read-modify-write on a session via an mkdir lock. Waits at most 200 ms
+ * Serialises read-modify-write on a session via an mkdir lock. Waits at most 500 ms
  * (polling every 10 ms), removes a lock older than 5 s, and on timeout runs `fn` anyway
  * (without releasing a lock it does not own): a hook must never hang or fail on contention.
  */

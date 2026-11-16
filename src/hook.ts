@@ -5,7 +5,7 @@
 // fail open (exit 0, no stdout), or deny a PreToolUse when config.json sets failClosed.
 // Stdout carries only the single JSON object (or nothing).
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 import { runEngine } from "./engine.js";
@@ -16,6 +16,9 @@ import { readStdin } from "./stdin.js";
 import type { HookInput, HookResult } from "./types.js";
 
 const WATCHDOG_MS = 1500;
+// Claude Code runs this file with its own environment, so default to the directory it lives in.
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ctxHere = () => makeCtx(process.env, HERE);
 
 interface Work {
   stdin: string;
@@ -25,7 +28,7 @@ interface Work {
 /** Cheap failClosed read: <leashHome>/config.json only. */
 function failClosedOn(): boolean {
   try {
-    const raw: unknown = JSON.parse(readFileSync(join(makeCtx().leashHome, "config.json"), "utf8"));
+    const raw: unknown = JSON.parse(readFileSync(join(ctxHere().leashHome, "config.json"), "utf8"));
     return (
       typeof raw === "object" &&
       raw !== null &&
@@ -38,7 +41,7 @@ function failClosedOn(): boolean {
 
 function failure(event: string, msg: string): HookResult {
   try {
-    appendError(makeCtx(), `hook ${event || "?"}: ${msg}`);
+    appendError(ctxHere(), `hook ${event || "?"}: ${msg}`);
   } catch {}
   if ((event === "PreToolUse" || event === "PostToolBatch") && failClosedOn()) {
     const m = "spend-leash: internal error (failClosed)";
@@ -65,7 +68,7 @@ function runHook(w: Work): HookResult {
   }
   input.hook_event_name = input.hook_event_name || w.argvEvent;
   try {
-    return runEngine(makeCtx(), input);
+    return runEngine(ctxHere(), input);
   } catch (e) {
     return failure(input.hook_event_name, `engine error: ${(e as Error).message}`);
   }

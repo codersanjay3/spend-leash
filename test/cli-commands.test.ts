@@ -390,6 +390,11 @@ describe("report", () => {
     expect(run(["report", "-n", "0"]).status).toBe(2);
   });
 
+  it("pluralizes the summary for a single task", () => {
+    ledger(L({ taskId: "solo", usd: 1 }));
+    expect(run(["report"]).stdout).toContain("1 task · $1.00");
+  });
+
   it("--today keeps only local-today tasks", () => {
     ledger(
       L({ taskId: "old", ts: "2020-01-01T12:00:00.000Z" }),

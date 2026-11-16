@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.js";
-import { lastTodosFrom, recentCallsFrom } from "./handoff-render.js";
+import { lastAssistantText, lastTodosFrom, recentCallsFrom } from "./handoff-render.js";
 import type { Ctx } from "./paths.js";
 import { atomicWrite } from "./state.js";
 
@@ -212,4 +212,8 @@ export function pendingHandoff(
   if (!top) return undefined;
   const body = top.text.startsWith("<!--") ? top.text.slice(top.text.indexOf("\n") + 1) : top.text;
   return { path: top.path, preview: body.trim().slice(0, PREVIEW_CHARS) };
+}
+
+export function lastAssistantMessage(transcript: string | unknown[]): string | undefined {
+  return lastAssistantText(typeof transcript === "string" ? readTail(transcript) : transcript);
 }

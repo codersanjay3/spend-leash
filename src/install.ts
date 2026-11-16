@@ -53,7 +53,7 @@ export interface InstallRecord {
   statusLine?: {
     settingsPath: string;
     original: unknown | null;
-    wrapper: { type: "command"; command: string; padding?: unknown };
+    wrapper: { type: "command"; command: string; [k: string]: unknown };
   };
   /** original bytes of every touched file (null = file did not exist), for byte-identical restore */
   originals: Record<string, string | null>;
@@ -222,10 +222,10 @@ export function planInstall(ctx: Ctx, opts: { scope: Scope; project: string }): 
       statusLine = { settingsPath: userPath, original: null, wrapper };
     } else if (isObj(effVal) && effVal.type === "command") {
       const f = files.get(eff.path);
-      const wrapper: { type: "command"; command: string; padding?: unknown } = {
+      const wrapper: { type: "command"; command: string; [k: string]: unknown } = {
+        ...structuredClone(effVal),
         type: "command",
         command: wrapperCmd,
-        ...(effVal.padding !== undefined ? { padding: effVal.padding } : {}),
       };
       f.after.statusLine = wrapper;
       statusLine = { settingsPath: eff.path, original: structuredClone(effVal), wrapper };

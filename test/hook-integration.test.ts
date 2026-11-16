@@ -43,6 +43,36 @@ function hook(input: unknown, argvEvent?: string) {
   return { stdout: r.stdout, stderr: r.stderr, code: r.status };
 }
 
+describe("hook entry point", () => {
+  it("defaults the leash home to its own directory when SPEND_LEASH_HOME is unset", () => {
+    const home = join(tmp, "custom-home");
+    mkdirSync(home);
+    const copy = join(home, "hook.mjs");
+    writeFileSync(copy, readFileSync(HOOK));
+    const e: NodeJS.ProcessEnv = { ...process.env, HOME: tmp, USERPROFILE: tmp };
+    delete e.SPEND_LEASH_HOME;
+    const r = spawnSync(process.execPath, [copy], {
+      input: JSON.stringify(evt("UserPromptSubmit", { prompt: "hello" })),
+      env: e,
+      encoding: "utf8",
+    });
+    expect(r.status).toBe(0);
+    expect(existsSync(join(home, "sessions", `${SID}.json`))).toBe(true);
+    expect(existsSync(join(tmp, ".spend-leash"))).toBe(false);
+  });
+
+  it("fails open within about 2.5 s when stdin never closes", async () => {
+    const t0 = Date.now();
+    const code = await new Promise<number | null>((res) => {
+      const c = execFile(process.execPath, [HOOK, "Stop"], { env: env() });
+      c.on("exit", (x) => res(x));
+      // stdin is left open and never ended
+    });
+    expect(code).toBe(0);
+    expect(Date.now() - t0).toBeLessThan(3500);
+  }, 10000);
+});
+
 const evt = (name: string, extra: Record<string, unknown> = {}) => ({
   hook_event_name: name,
   session_id: SID,

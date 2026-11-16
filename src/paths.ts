@@ -7,9 +7,10 @@ export interface Ctx {
   now: () => Date;
 }
 
-export function makeCtx(env: NodeJS.ProcessEnv = process.env): Ctx {
+/** `defaultLeashHome` applies only when SPEND_LEASH_HOME is unset (the hook and status line pass their own directory). */
+export function makeCtx(env: NodeJS.ProcessEnv = process.env, defaultLeashHome?: string): Ctx {
   const home = env.HOME || env.USERPROFILE || homedir();
-  const leashHome = env.SPEND_LEASH_HOME || join(home, ".spend-leash");
+  const leashHome = env.SPEND_LEASH_HOME || defaultLeashHome || join(home, ".spend-leash");
   return { home, leashHome, now: () => new Date() };
 }
 

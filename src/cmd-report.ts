@@ -104,6 +104,6 @@ export async function cmdReport(argv: string[], env: CommandEnv): Promise<number
       .trimEnd();
   console.log(fmt(head));
   for (const c of cells) console.log(fmt(c));
-  console.log(`${rows.length} tasks · ${usd(total)}`);
+  console.log(`${rows.length} ${rows.length === 1 ? "task" : "tasks"} · ${usd(total)}`);
   return 0;
 }

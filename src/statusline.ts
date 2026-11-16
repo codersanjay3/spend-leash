@@ -1,12 +1,16 @@
 // Status-line wrapper: records a snapshot, then reproduces the user's original status line.
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { makeCtx } from "./paths.js";
 import { appendError, readSession, writeSnapshot } from "./state.js";
 import { ownLine, snapshotFrom } from "./statusline-core.js";
 
 const TOTAL_MS = 2000;
+// Claude Code runs this file with its own environment, so default to the directory it lives in.
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ctxHere = () => makeCtx(process.env, HERE);
 
 const STDIN_WAIT_MS = 500;
 const MIN_RUN_MS = 300;
@@ -42,7 +46,7 @@ function runOriginal(command: string, cwd: string, stdin: Buffer, budgetMs: numb
     try {
       child = spawn(command, { shell: true, cwd, detached: posix, stdio: "pipe" });
     } catch (e) {
-      appendError(makeCtx(), `statusline: spawn failed: ${(e as Error).message}`);
+      appendError(ctxHere(), `statusline: spawn failed: ${(e as Error).message}`);
       return done();
     }
     child.stdout?.on("data", (c: Buffer) => out.push(c));
@@ -50,7 +54,7 @@ function runOriginal(command: string, cwd: string, stdin: Buffer, budgetMs: numb
     child.stdin?.on("error", () => {});
     child.stdin?.end(stdin);
     child.on("error", (e) => {
-      appendError(makeCtx(), `statusline: original failed: ${e.message}`);
+      appendError(ctxHere(), `statusline: original failed: ${e.message}`);
       finish();
     });
     child.on("close", finish);
@@ -77,7 +81,7 @@ function originalCommand(leashHome: string): string | undefined {
 async function main(): Promise<void> {
   const start = Date.now();
   const bytes = await readStdinBytes();
-  const ctx = makeCtx();
+  const ctx = ctxHere();
   let input: unknown;
   try {
     input = JSON.parse(bytes.toString("utf8"));
@@ -113,5 +117,5 @@ async function main(): Promise<void> {
 }
 
 main()
-  .catch((e) => appendError(makeCtx(), `statusline: ${(e as Error).message}`))
+  .catch((e) => appendError(ctxHere(), `statusline: ${(e as Error).message}`))
   .finally(() => process.exit(0));
