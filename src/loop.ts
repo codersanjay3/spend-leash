@@ -9,17 +9,28 @@ export const IGNORED_BY_DEFAULT = ["TodoWrite", "TaskCreate", "TaskUpdate", "Tas
 type Loop = SessionState["loop"];
 export type LoopVerdict = "ok" | "warn" | "stop";
 
-function canon(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map((x) => (x === undefined ? "null" : canon(x))).join(",")}]`;
-  if (v && typeof v === "object") {
+const MAX_DEPTH = 64;
+
+/** Total canonicalization: never throws (depth cap, cycle marker, BigInt support). */
+function canon(v: unknown, depth = 0, seen: WeakSet<object> = new WeakSet()): string {
+  if (typeof v === "bigint") return `"${v.toString()}n"`;
+  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
+  if (seen.has(v)) return '"<cycle>"';
+  if (depth >= MAX_DEPTH) return '"<deep>"';
+  seen.add(v);
+  try {
+    if (Array.isArray(v)) {
+      return `[${v.map((x) => (x === undefined ? "null" : canon(x, depth + 1, seen))).join(",")}]`;
+    }
     const o = v as Record<string, unknown>;
     const parts = Object.keys(o)
       .filter((k) => o[k] !== undefined)
       .sort()
-      .map((k) => `${JSON.stringify(k)}:${canon(o[k])}`);
+      .map((k) => `${JSON.stringify(k)}:${canon(o[k], depth + 1, seen)}`);
     return `{${parts.join(",")}}`;
+  } finally {
+    seen.delete(v);
   }
-  return JSON.stringify(v) ?? "null";
 }
 
 /** cyrb53: fast pure-JS 53-bit hash. Not cryptographic; only used to compare calls. */
@@ -39,11 +50,14 @@ function hash53(str: string): string {
 /** `<toolName>:<hash>` of the canonical input. Bash uses only `command`, whitespace collapsed. */
 export function fingerprint(toolName: string, toolInput: unknown): string {
   let body: string;
-  const cmd = (toolInput as { command?: unknown } | null | undefined)?.command;
-  if (toolName === "Bash" && typeof cmd === "string") {
-    body = cmd.replace(/\s+/g, " ").trim();
-  } else {
-    body = canon(toolInput);
+  try {
+    const cmd = (toolInput as { command?: unknown } | null | undefined)?.command;
+    body =
+      toolName === "Bash" && typeof cmd === "string"
+        ? cmd.replace(/\s+/g, " ").trim()
+        : canon(toolInput);
+  } catch {
+    body = "<unserializable>";
   }
   return `${toolName}:${hash53(body)}`;
 }
@@ -76,6 +90,8 @@ export function recordCall(
 
 export function recordFailure(loop: Loop, toolName: string, toolInput: unknown): Loop {
   const fp = fingerprint(toolName, toolInput);
+  // A failure only counts while its call is still in the window.
+  if (!loop.calls.includes(fp)) return { calls: [...loop.calls], failures: { ...loop.failures } };
   return {
     calls: [...loop.calls],
     failures: { ...loop.failures, [fp]: (loop.failures[fp] ?? 0) + 1 },

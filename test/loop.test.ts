@@ -60,6 +60,24 @@ describe("fingerprint", () => {
     const fp = fingerprint("Write", { file_path: "a", content: "x".repeat(1_000_000) });
     expect(fp).toMatch(/^Write:[0-9a-f]{1,14}$/);
   });
+  it("is total and deterministic for BigInt, cycles and deep nesting", () => {
+    const cyc: Record<string, unknown> = { a: 1 };
+    cyc.self = cyc;
+    let deep: unknown = "x";
+    for (let i = 0; i < 20000; i++) deep = { n: deep };
+    for (const input of [{ a: 1n }, cyc, deep]) {
+      const f1 = fingerprint("Read", input);
+      expect(f1).toMatch(/^Read:[0-9a-f]+$/);
+      expect(fingerprint("Read", input)).toBe(f1);
+    }
+    expect(fingerprint("Read", { a: 1n })).not.toBe(fingerprint("Read", { a: 1 }));
+  });
+  it("shared (non-cyclic) references are not marked as cycles", () => {
+    const shared = { k: 1 };
+    expect(fingerprint("X", { a: shared, b: shared })).toBe(
+      fingerprint("X", { a: { k: 1 }, b: { k: 1 } }),
+    );
+  });
   it("tolerates odd inputs", () => {
     expect(() => fingerprint("Bash", null)).not.toThrow();
     expect(() => fingerprint("Bash", "str")).not.toThrow();
@@ -135,6 +153,13 @@ describe("recordCall", () => {
     r = recordCall(loop, "Bash", bash("npm test"), cfg);
     expect(r.count).toBe(3);
     expect(r.verdict).toBe("warn");
+  });
+  it("ignores a late failure whose call is not in the window", () => {
+    const late = recordFailure(empty(), "Bash", bash("x"));
+    expect(late).toEqual(empty());
+    const r = recordCall(late, "Bash", bash("x"), cfg);
+    expect(r.count).toBe(1);
+    expect(r.verdict).toBe("ok");
   });
   it("recordFailure only touches failures", () => {
     const l = recordCall(empty(), "Bash", bash("x"), cfg).loop;
