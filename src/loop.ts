@@ -9,6 +9,7 @@ export const IGNORED_BY_DEFAULT = ["TodoWrite", "TaskCreate", "TaskUpdate", "Tas
 type Loop = SessionState["loop"];
 export type LoopVerdict = "ok" | "warn" | "stop";
 
+// Inputs that differ only below this depth share a fingerprint, by design.
 const MAX_DEPTH = 64;
 
 /** Total canonicalization: never throws (depth cap, cycle marker, BigInt support). */

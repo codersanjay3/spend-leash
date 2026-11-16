@@ -78,6 +78,24 @@ describe("fingerprint", () => {
       fingerprint("X", { a: { k: 1 }, b: { k: 1 } }),
     );
   });
+  it("falls back to the unserializable marker when reading the input throws", () => {
+    const throwing = {
+      get command(): string {
+        throw new Error("x");
+      },
+    };
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    for (const [tool, input] of [
+      ["Bash", throwing],
+      ["Read", revoked.proxy],
+    ] as const) {
+      const f1 = fingerprint(tool, input);
+      expect(f1).toMatch(new RegExp(`^${tool}:[0-9a-f]+$`));
+      expect(fingerprint(tool, input)).toBe(f1);
+    }
+    expect(fingerprint("Bash", throwing)).toBe(fingerprint("Bash", revoked.proxy));
+  });
   it("tolerates odd inputs", () => {
     expect(() => fingerprint("Bash", null)).not.toThrow();
     expect(() => fingerprint("Bash", "str")).not.toThrow();
