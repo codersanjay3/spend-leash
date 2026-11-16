@@ -15,8 +15,9 @@
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
     "test": "vitest run",
-    "lint": "biome check src test",
-    "format": "biome check --write src test",
+    "lint": "biome check src test site",
+    "format": "biome check --write src test site",
+    "site:build": "node scripts/build-site.mjs",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run lint && npm test && npm run build"
   },

@@ -89,3 +89,59 @@ export function renderHandoff(d: HandoffData): string {
   out.push("- `#budget new` starts a fresh task with the default budget", "");
   return out.join("\n");
 }
+
+interface ToolUse {
+  id?: string;
+  name: string;
+  input: unknown;
+}
+
+function isObj(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** tool_use blocks of assistant messages in parsed transcript records, oldest first, deduped by id. */
+function toolUses(records: unknown[]): ToolUse[] {
+  const out: ToolUse[] = [];
+  const seen = new Set<string>();
+  for (const rec of records) {
+    if (!isObj(rec) || !isObj(rec.message)) continue;
+    if (rec.type !== undefined && rec.type !== "assistant") continue;
+    const content = rec.message.content;
+    if (!Array.isArray(content)) continue;
+    for (const b of content) {
+      if (!isObj(b) || b.type !== "tool_use" || typeof b.name !== "string") continue;
+      const id = typeof b.id === "string" ? b.id : undefined;
+      if (id !== undefined) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+      }
+      out.push({ id, name: b.name, input: b.input });
+    }
+  }
+  return out;
+}
+
+export function recentCallsFrom(records: unknown[], n = 10): { tool: string; args: unknown }[] {
+  if (n <= 0) return [];
+  return toolUses(records)
+    .slice(-n)
+    .map((t) => ({ tool: t.name, args: t.input }));
+}
+
+/** The last TodoWrite list as `[status] content` strings; undefined when there is none. */
+export function lastTodosFrom(records: unknown[]): string[] | undefined {
+  const uses = toolUses(records);
+  for (let i = uses.length - 1; i >= 0; i--) {
+    const u = uses[i];
+    if (u?.name !== "TodoWrite" || !isObj(u.input) || !Array.isArray(u.input.todos)) continue;
+    const todos = u.input.todos
+      .filter(isObj)
+      .map(
+        (t) =>
+          `[${typeof t.status === "string" && t.status ? t.status : " "}] ${String(t.content)}`,
+      );
+    return todos.length > 0 ? todos : undefined;
+  }
+  return undefined;
+}

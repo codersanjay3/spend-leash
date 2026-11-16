@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>spend-leash simulator</title>
+    <meta
+      name="description"
+      content="Watch what spend-leash would do to a Claude Code session, call by call: budget warnings and stops, the loop breaker, plan limits and handoff files. Runs entirely in your browser."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <h1>spend-leash simulator</h1>
+      <p class="lede">
+        Per-task budgets, a loop breaker and handoff files for Claude Code. Pick a scenario and
+        watch exactly what the real hook would do, call by call.
+      </p>
+      <div class="top-row">
+        <code class="cmd">npx spend-leash init</code>
+        <button type="button" id="copy-cmd" class="btn">Copy</button>
+        <a class="btn link" href="https://github.com/codersanjay3/spend-leash">GitHub</a>
+      </div>
+      <p class="privacy">
+        Nothing leaves your browser. This page runs the same decision code as the hook, locally, on
+        made-up or pasted data.
+      </p>
+    </header>
+
+    <main>
+      <section class="panel" aria-labelledby="in-h">
+        <h2 id="in-h">1. Pick a scenario</h2>
+        <div id="chips" class="chips" role="group" aria-label="Scenarios"></div>
+        <p id="desc" class="hint" aria-live="polite"></p>
+
+        <h3 class="sub">Limits</h3>
+        <div class="cfg">
+          <label for="c-budget">Budget ($)<input id="c-budget" type="number" min="0" step="0.5" value="2" inputmode="decimal" /></label>
+          <label for="c-warn">Warn at (%)<input id="c-warn" type="number" min="1" max="100" step="5" value="80" inputmode="numeric" /></label>
+          <label for="c-lwarn">Loop warn<input id="c-lwarn" type="number" min="1" step="1" value="3" inputmode="numeric" /></label>
+          <label for="c-lstop">Loop stop<input id="c-lstop" type="number" min="1" step="1" value="5" inputmode="numeric" /></label>
+        </div>
+        <p id="cfg-note" class="hint" aria-live="polite"></p>
+
+        <details id="paste-box">
+          <summary>Or replay your own transcript</summary>
+          <p class="hint">
+            Paste a Claude Code transcript (JSONL, from <code>~/.claude/projects/</code>). Each
+            prompt and tool call becomes a step. It is parsed here and never uploaded.
+          </p>
+          <label for="paste">Transcript JSONL</label>
+          <textarea id="paste" rows="6" spellcheck="false" autocomplete="off" placeholder='{"type":"user","message":{"content":"..."}}'></textarea>
+          <div class="top-row">
+            <button type="button" id="replay" class="btn">Replay</button>
+          </div>
+          <p id="paste-err" class="error" role="alert" hidden></p>
+        </details>
+      </section>
+
+      <section class="panel" aria-labelledby="out-h">
+        <h2 id="out-h">2. What the hook does</h2>
+        <p id="summary" class="summary" aria-live="polite"></p>
+        <div class="meter" role="img" aria-label="Task spend against budget">
+          <div id="bar" class="bar"><div id="bar-fill" class="fill"></div><div id="bar-warn" class="warn-mark"></div></div>
+          <p id="bar-text" class="bar-text"></p>
+        </div>
+        <label for="scrub" class="scrub-l">Replay up to call <output id="scrub-out"></output></label>
+        <input id="scrub" type="range" min="1" max="1" value="1" />
+        <div class="table-wrap">
+          <table id="table">
+            <thead>
+              <tr><th class="n">#</th><th>Call</th><th class="num">Spend</th><th class="num plan">5h</th><th>Verdict</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div id="handoff-wrap" hidden>
+          <div class="snip-head">
+            <h3>handoff written to <code id="handoff-path"></code></h3>
+            <button type="button" id="copy-handoff" class="btn">Copy</button>
+          </div>
+          <pre id="handoff" class="snippet"></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>MIT licensed</span> &middot;
+      <a href="https://github.com/codersanjay3/spend-leash">github.com/codersanjay3/spend-leash</a>
+      &middot; also from the same author:
+      <a href="https://github.com/codersanjay3/mcp-leash">mcp-leash</a>, permissions for MCP servers
+    </footer>
+    <script src="main.js" defer></script>
+  </body>
+</html>

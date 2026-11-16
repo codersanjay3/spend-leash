@@ -4,6 +4,7 @@
 import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { addUsage, costUsd, type Price, priceFor, type UsageTotals, ZERO } from "./pricing.js";
+import { usageFromLine } from "./transcript-parse.js";
 
 export interface FileCursor {
   offset: number;
@@ -23,30 +24,6 @@ export interface SpendResult {
   usd: number;
   tokens: UsageTotals;
   estimated: boolean;
-}
-
-function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
-}
-
-function parseUsage(usage: Record<string, unknown>): UsageTotals {
-  const cc = usage.cache_creation;
-  let cacheWrite5m: number;
-  let cacheWrite1h = 0;
-  if (cc && typeof cc === "object") {
-    const o = cc as Record<string, unknown>;
-    cacheWrite5m = num(o.ephemeral_5m_input_tokens);
-    cacheWrite1h = num(o.ephemeral_1h_input_tokens);
-  } else {
-    cacheWrite5m = num(usage.cache_creation_input_tokens);
-  }
-  return {
-    input: num(usage.input_tokens),
-    output: num(usage.output_tokens),
-    cacheWrite5m,
-    cacheWrite1h,
-    cacheRead: num(usage.cache_read_input_tokens),
-  };
 }
 
 function listFiles(transcriptPath: string): string[] {
@@ -129,32 +106,14 @@ function sameHead(path: string, c: FileCursor): boolean {
 }
 
 function processLine(line: string, cur: FileCursor, seen: Set<string>): void {
-  if (!line.includes('"usage"') || !line.includes('"assistant"')) return;
-  let obj: unknown;
-  try {
-    obj = JSON.parse(line);
-  } catch {
-    return;
+  const u = usageFromLine(line);
+  if (!u) return;
+  if (u.id) {
+    if (seen.has(u.id)) return;
+    seen.add(u.id);
+    cur.ids.push(u.id);
   }
-  if (!obj || typeof obj !== "object") return;
-  const rec = obj as Record<string, unknown>;
-  if (rec.type !== "assistant") return;
-  const msg = rec.message as Record<string, unknown> | undefined;
-  if (!msg || typeof msg !== "object") return;
-  const usage = msg.usage;
-  if (!usage || typeof usage !== "object") return;
-
-  let key: string | undefined;
-  if (typeof msg.id === "string" && msg.id) key = msg.id;
-  else if (typeof rec.uuid === "string" && rec.uuid) key = `uuid:${rec.uuid}`;
-  if (key !== undefined) {
-    if (seen.has(key)) return;
-    seen.add(key);
-    cur.ids.push(key);
-  }
-  const model = typeof msg.model === "string" && msg.model ? msg.model : "unknown";
-  const u = parseUsage(usage as Record<string, unknown>);
-  cur.byModel[model] = addUsage(cur.byModel[model] ?? ZERO, u);
+  cur.byModel[u.model] = addUsage(cur.byModel[u.model] ?? ZERO, u.usage);
 }
 
 export function readSpend(
