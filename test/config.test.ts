@@ -175,3 +175,47 @@ describe("loadConfig", () => {
     ]);
   });
 });
+
+describe("hostile config input", () => {
+  const evil = ["__proto__", "constructor", "toString"];
+  const hostile = (key: string, val: unknown) =>
+    JSON.parse(`{${JSON.stringify(key)}:${JSON.stringify(val)}}`);
+
+  for (const file of ["user", "project"] as const) {
+    const run = (x: unknown) =>
+      file === "user" ? mergeConfig(x, undefined) : mergeConfig(undefined, x);
+    for (const key of evil) {
+      it(`${file}: ${key} at top level and in sections is noted, config unchanged`, () => {
+        const top = run(hostile(key, { keys: 1, polluted: 1 }));
+        expect(top.config).toEqual(DEFAULT_CONFIG);
+        expect(top.notes.length).toBeGreaterThan(0);
+        for (const section of ["task", "plan", "loop", "handoff"]) {
+          const r = run({ [section]: hostile(key, 1) });
+          expect(r.config).toEqual(DEFAULT_CONFIG);
+          expect(r.notes.some((n) => n.includes("unknown key"))).toBe(true);
+        }
+        expect(typeof Object.keys).toBe("function");
+        expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+        expect(({} as Record<string, unknown>).keys).toBeUndefined();
+      });
+    }
+  }
+
+  it("user prices with a __proto__ key do not pollute", () => {
+    const p = { input: 1, output: 1, cacheWrite5m: 1, cacheWrite1h: 1, cacheRead: 1 };
+    const r = mergeConfig({ prices: JSON.parse(`{"__proto__":${JSON.stringify(p)}}`) }, undefined);
+    expect(Object.getPrototypeOf(r.config.prices)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).input).toBeUndefined();
+  });
+
+  it("project string number is ignored with a note", () => {
+    const r = mergeConfig(undefined, { task: { usd: "50" } });
+    expect(r.config).toEqual(DEFAULT_CONFIG);
+    expect(r.notes).toHaveLength(1);
+    expect(r.notes[0]).toContain("ignored");
+  });
+
+  it("project prices note is meaningful", () => {
+    expect(mergeConfig(undefined, { prices: {} }).notes[0]).not.toContain("...");
+  });
+});

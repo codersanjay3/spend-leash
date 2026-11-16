@@ -45,6 +45,8 @@ const isPct = (v: unknown): v is number => isNum(v) && v > 0 && v <= 100;
 const isFrac = (v: unknown): v is number => isNum(v) && v > 0 && v <= 1;
 const isCount = (v: unknown): v is number => isNum(v) && Number.isInteger(v) && v >= 1;
 
+const has = (o: object, k: string): boolean => Object.hasOwn(o, k);
+
 const SCHEMA: Record<string, Record<string, (v: unknown) => boolean>> = {
   task: {
     usd: (v) => v === null || (isNum(v) && v > 0),
@@ -70,7 +72,7 @@ function parsePrices(
     notes.push(`${file}: prices ignored (must be an object)`);
     return undefined;
   }
-  const out: Record<string, Price> = {};
+  const entries: [string, Price][] = [];
   for (const [key, val] of Object.entries(raw)) {
     const ok =
       key.trim() !== "" &&
@@ -83,15 +85,18 @@ function parsePrices(
       continue;
     }
     const v = val as Obj;
-    out[key] = {
-      input: v.input as number,
-      output: v.output as number,
-      cacheWrite5m: v.cacheWrite5m as number,
-      cacheWrite1h: v.cacheWrite1h as number,
-      cacheRead: v.cacheRead as number,
-    };
+    entries.push([
+      key,
+      {
+        input: v.input as number,
+        output: v.output as number,
+        cacheWrite5m: v.cacheWrite5m as number,
+        cacheWrite1h: v.cacheWrite1h as number,
+        cacheRead: v.cacheRead as number,
+      },
+    ]);
   }
-  return Object.keys(out).length ? out : undefined;
+  return entries.length ? Object.fromEntries(entries) : undefined;
 }
 
 function applyUser(user: unknown, cfg: Config, notes: string[]): void {
@@ -110,14 +115,15 @@ function applyUser(user: unknown, cfg: Config, notes: string[]): void {
     } else if (section === "prices") {
       const p = parsePrices(val, notes, USER_FILE);
       if (p) cfg.prices = p;
-    } else if (SCHEMA[section]) {
+    } else if (has(SCHEMA, section)) {
       if (!isObj(val)) {
         notes.push(`${USER_FILE}: ${section} ignored (must be an object)`);
         continue;
       }
       const target = cfg[section as "task" | "plan" | "loop" | "handoff"] as unknown as Obj;
       for (const [k, v] of Object.entries(val)) {
-        const check = SCHEMA[section]?.[k];
+        const sec = SCHEMA[section] as Record<string, (v: unknown) => boolean>;
+        const check = has(sec, k) ? sec[k] : undefined;
         if (!check) notes.push(`${USER_FILE}: unknown key ${section}.${k} ignored`);
         else if (check(v)) target[k] = Array.isArray(v) ? [...v] : v;
         else
@@ -156,15 +162,16 @@ function applyProject(project: unknown, cfg: Config, notes: string[]): void {
       else if (val) cfg.failClosed = true;
       else if (cfg.failClosed) ignore("failClosed", val, TIGHT_NOTE);
     } else if (section === "prices") {
-      ignore("prices", "...", "project config cannot override prices");
-    } else if (SCHEMA[section]) {
+      ignore("prices", "(any)", "project config cannot override prices");
+    } else if (has(SCHEMA, section)) {
       if (!isObj(val)) {
         notes.push(`${PROJECT_FILE}: ${section} ignored (must be an object)`);
         continue;
       }
       for (const [k, v] of Object.entries(val)) {
         const path = `${section}.${k}`;
-        const check = SCHEMA[section]?.[k];
+        const sec = SCHEMA[section] as Record<string, (v: unknown) => boolean>;
+        const check = has(sec, k) ? sec[k] : undefined;
         if (!check) {
           notes.push(`${PROJECT_FILE}: unknown key ${path} ignored`);
           continue;
@@ -224,9 +231,20 @@ function tighten(
 }
 
 export function mergeConfig(user: unknown, project: unknown): { config: Config; notes: string[] } {
-  const config = clone(DEFAULT_CONFIG);
   const notes: string[] = [];
-  applyUser(user, config, notes);
-  applyProject(project, config, notes);
+  let config = clone(DEFAULT_CONFIG);
+  try {
+    applyUser(user, config, notes);
+  } catch {
+    config = clone(DEFAULT_CONFIG);
+    notes.push(`${USER_FILE}: could not be applied, defaults kept`);
+  }
+  const before = clone(config);
+  try {
+    applyProject(project, config, notes);
+  } catch {
+    config = before;
+    notes.push(`${PROJECT_FILE}: could not be applied, ignored`);
+  }
   return { config, notes };
 }

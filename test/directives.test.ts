@@ -29,6 +29,10 @@ describe("parseDirective", () => {
       expect(parseDirective(p), p).toBeUndefined();
     }
   });
+  it("accepts a repeated amount token", () => {
+    expect(parseDirective("#budget $5 $5")).toEqual({ kind: "set", usd: 5 });
+    expect(parseDirective("#budget 5% 5%")).toEqual({ kind: "set", planPct: 5 });
+  });
   it("only matches at the start", () => {
     expect(parseDirective("fix #budget $5")).toBeUndefined();
     expect(parseDirective("#budgetary $5")).toBeUndefined();

@@ -25,7 +25,7 @@ export function parseDirective(prompt: string): Directive | undefined {
   }
   let usd: number | undefined;
   let planPct: number | undefined;
-  for (const t of tokens.slice(0, 2)) {
+  for (const [i, t] of tokens.slice(0, 2).entries()) {
     const u = USD.exec(t);
     const p = PCT.exec(t);
     if (u && usd === undefined) {
@@ -34,7 +34,7 @@ export function parseDirective(prompt: string): Directive | undefined {
     } else if (p && planPct === undefined) {
       planPct = Number(p[1]);
       if (!(planPct > 0 && planPct <= 100)) return undefined;
-    } else if (t === tokens[0]) {
+    } else if (i === 0) {
       return undefined; // first token must be a valid amount
     } else {
       break;
