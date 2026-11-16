@@ -22,7 +22,7 @@ export { type HandoffData, renderHandoff } from "./handoff-render.js";
 const TAIL_BYTES = 2 * 1024 * 1024;
 const MAX_AGE_MS = 7 * 24 * 3600 * 1000;
 const PREVIEW_CHARS = 1500;
-const FALLBACK_CODES = new Set(["EACCES", "EPERM", "EROFS", "ENOENT"]);
+const FALLBACK_CODES = new Set(["EACCES", "EPERM", "EROFS", "ENOENT", "ENOTDIR", "ENOSPC"]);
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -74,7 +74,8 @@ export function writeHandoff(
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, {
     cwd,
-    timeout: 2000,
+    timeout: 400,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
@@ -119,24 +120,29 @@ function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** tool_use blocks of assistant messages in the transcript tail, oldest first, deduped by id. */
-function toolUses(transcriptPath: string): ToolUse[] {
-  const out: ToolUse[] = [];
-  const seen = new Set<string>();
+/** Parsed JSON records from the transcript tail (≤ 2 MB); unreadable file or bad lines are skipped. */
+export function readTail(transcriptPath: string): unknown[] {
   let lines: string[];
   try {
     lines = tailLines(transcriptPath);
   } catch {
-    return out;
+    return [];
   }
+  const out: unknown[] = [];
   for (const line of lines) {
     if (!line.trim()) continue;
-    let rec: unknown;
     try {
-      rec = JSON.parse(line);
-    } catch {
-      continue;
-    }
+      out.push(JSON.parse(line));
+    } catch {}
+  }
+  return out;
+}
+
+/** tool_use blocks of assistant messages in the transcript tail, oldest first, deduped by id. */
+function toolUses(src: string | unknown[]): ToolUse[] {
+  const out: ToolUse[] = [];
+  const seen = new Set<string>();
+  for (const rec of typeof src === "string" ? readTail(src) : src) {
     if (!isObj(rec) || !isObj(rec.message)) continue;
     if (rec.type !== undefined && rec.type !== "assistant") continue;
     const content = rec.message.content;
@@ -154,22 +160,28 @@ function toolUses(transcriptPath: string): ToolUse[] {
   return out;
 }
 
-export function recentToolCalls(transcriptPath: string, n = 10): { tool: string; args: unknown }[] {
+export function recentToolCalls(
+  transcript: string | unknown[],
+  n = 10,
+): { tool: string; args: unknown }[] {
   if (n <= 0) return [];
-  return toolUses(transcriptPath)
+  return toolUses(transcript)
     .slice(-n)
     .map((t) => ({ tool: t.name, args: t.input }));
 }
 
 /** The last TodoWrite list as `[status] content` strings; undefined when there is none. */
-export function lastTodos(transcriptPath: string): string[] | undefined {
-  const uses = toolUses(transcriptPath);
+export function lastTodos(transcript: string | unknown[]): string[] | undefined {
+  const uses = toolUses(transcript);
   for (let i = uses.length - 1; i >= 0; i--) {
     const u = uses[i];
     if (u?.name !== "TodoWrite" || !isObj(u.input) || !Array.isArray(u.input.todos)) continue;
     const todos = u.input.todos
       .filter(isObj)
-      .map((t) => `[${String(t.status)}] ${String(t.content)}`);
+      .map(
+        (t) =>
+          `[${typeof t.status === "string" && t.status ? t.status : " "}] ${String(t.content)}`,
+      );
     return todos.length > 0 ? todos : undefined;
   }
   return undefined;
@@ -215,7 +227,7 @@ export function pendingHandoff(
     { dir: join(cwd, cfg?.handoff.dir ?? ".spend-leash/handoffs"), needMatch: false },
     { dir: join(ctx.leashHome, "handoffs"), needMatch: true },
   ];
-  const found: { path: string; mtime: number; text: string }[] = [];
+  const found: { path: string; mtime: number; needMatch: boolean }[] = [];
   for (const { dir, needMatch } of dirs) {
     let names: string[];
     try {
@@ -228,17 +240,21 @@ export function pendingHandoff(
       if (consumed.has(path)) continue;
       try {
         const mtime = statSync(path).mtimeMs;
-        if (now.getTime() - mtime >= MAX_AGE_MS) continue;
-        const text = readFileSync(path, "utf8");
-        const nl = text.indexOf("\n");
-        const first = nl < 0 ? text : text.slice(0, nl);
-        if (needMatch && metaCwd(first) !== cwd) continue;
-        found.push({ path, mtime, text });
+        if (now.getTime() - mtime < MAX_AGE_MS) found.push({ path, mtime, needMatch });
       } catch {}
     }
   }
   found.sort((a, b) => b.mtime - a.mtime || (a.path < b.path ? 1 : -1));
-  const top = found[0];
+  let top: { path: string; text: string } | undefined;
+  for (const f of found) {
+    try {
+      const text = readFileSync(f.path, "utf8");
+      const nl = text.indexOf("\n");
+      if (f.needMatch && metaCwd(nl < 0 ? text : text.slice(0, nl)) !== cwd) continue;
+      top = { path: f.path, text };
+      break;
+    } catch {}
+  }
   if (!top) return undefined;
   const body = top.text.startsWith("<!--") ? top.text.slice(top.text.indexOf("\n") + 1) : top.text;
   return { path: top.path, preview: body.trim().slice(0, PREVIEW_CHARS) };

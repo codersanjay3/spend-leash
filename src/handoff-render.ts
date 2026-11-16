@@ -1,5 +1,5 @@
 // Pure handoff markdown renderer: no node:* imports (the browser simulator bundles this).
-import { argsPreview } from "./redact.js";
+import { argsPreview, redact } from "./redact.js";
 import type { Task } from "./tasks.js";
 
 export interface HandoffData {
@@ -18,6 +18,10 @@ export interface HandoffData {
 const MAX_ASSISTANT = 2000;
 const MAX_CALLS = 10;
 const PREVIEW_CHARS = 120;
+const MAX_CHANGED_LINES = 50;
+const SAFE_SESSION = /^[\w-]+$/;
+
+const clean = (s: string): string => String(redact(s));
 
 /** First line of every handoff; pendingHandoff matches files to a project through it. */
 export function metaLine(cwd: string, sessionId: string): string {
@@ -36,13 +40,13 @@ export function renderHandoff(d: HandoffData): string {
   const out: string[] = [];
   if (d.cwd !== undefined) out.push(metaLine(d.cwd, d.sessionId));
   out.push("# Handoff", "");
-  out.push(`**Stopped:** ${d.reason}: ${d.detail} (${d.now.toISOString()})`, "");
+  out.push(`**Stopped:** ${clean(d.reason)}: ${clean(d.detail)} (${d.now.toISOString()})`, "");
 
   out.push("## Task", "");
-  out.push(d.task ? fence(d.task.prompt) : "(no task recorded)", "");
+  out.push(d.task ? fence(clean(d.task.prompt)) : "(no task recorded)", "");
 
   out.push("## Where it stopped", "");
-  const last = d.lastAssistant?.trim();
+  const last = d.lastAssistant === undefined ? undefined : clean(d.lastAssistant).trim();
   if (last) {
     const cut = last.length > MAX_ASSISTANT ? `${last.slice(0, MAX_ASSISTANT - 1)}…` : last;
     out.push(fence(cut), "");
@@ -58,18 +62,28 @@ export function renderHandoff(d: HandoffData): string {
 
   if (d.git) {
     out.push("## Changed files", "");
-    const body = [d.git.status.trim(), d.git.diffStat.trim()].filter(Boolean).join("\n\n");
-    out.push(body ? fence(body) : "(no uncommitted changes)", "");
+    const lines = [d.git.status.trim(), d.git.diffStat.trim()]
+      .filter(Boolean)
+      .join("\n\n")
+      .split("\n");
+    if (lines.length === 1 && lines[0] === "") out.push("(no uncommitted changes)", "");
+    else {
+      const shown = lines.slice(0, MAX_CHANGED_LINES);
+      if (lines.length > shown.length) shown.push(`… and ${lines.length - shown.length} more`);
+      out.push(fence(shown.join("\n")), "");
+    }
   }
 
   if (d.todos && d.todos.length > 0) {
     out.push("## Next steps", "");
-    for (const t of d.todos) out.push(`- ${t.replace(/\n/g, " ")}`);
+    for (const t of d.todos) out.push(`- ${clean(t).replace(/\n/g, " ")}`);
     out.push("");
   }
 
   out.push("## Resume", "");
-  out.push(`Continue this session: \`claude --resume ${d.sessionId}\``, "");
+  if (SAFE_SESSION.test(d.sessionId)) {
+    out.push(`Continue this session: \`claude --resume ${d.sessionId}\``, "");
+  }
   out.push("Then raise the limit with the first line of your prompt:", "");
   out.push("- `#budget +$2` adds $2 to this task's budget");
   out.push("- `#budget new` starts a fresh task with the default budget", "");

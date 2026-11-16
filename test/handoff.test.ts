@@ -17,6 +17,7 @@ import {
   lastTodos,
   markConsumed,
   pendingHandoff,
+  readTail,
   recentToolCalls,
   renderHandoff,
   writeHandoff,
@@ -139,6 +140,82 @@ describe("renderHandoff", () => {
   it("fences prompts containing backticks safely", () => {
     const md = render({ task: { ...task, prompt: "run ```x```" } });
     expect(md).toContain("````");
+  });
+});
+
+describe("redaction and bounds", () => {
+  it.each([
+    "GITHUB_TOKEN=abc123def",
+    "MY_PASSWORD=hunter2",
+    "DB_SECRET: foo",
+    "export FOO_TOKEN=abc123def",
+    "mysql --password hunter2",
+    "tool --token abc123def",
+    "tool --api-key=abc123def",
+    "tool --password=hunter2",
+  ])("redacts %s", (s) => {
+    const md = render({ recentCalls: [{ tool: "Bash", args: { command: s } }] });
+    const secret = s.split(/[=:\s]+/).pop() as string;
+    expect(md).not.toContain(secret);
+    expect(md).toContain("[REDACTED]");
+  });
+
+  it("redacts free text: prompt, assistant message, todos, detail", () => {
+    const gh = "ghp_abcdefghijklmnopqrstuvwxyz0123";
+    const sk = `sk-${"b".repeat(30)}`;
+    const md = render({
+      task: { ...task, prompt: `use ${gh} and ${sk}` },
+      lastAssistant: `I saw ${gh} and ${sk}`,
+      todos: [`[pending] rotate ${sk}`],
+      detail: `leaked ${gh}`,
+    });
+    expect(md).not.toContain("ghp_abc");
+    expect(md).not.toContain("sk-bbb");
+  });
+
+  it("caps Changed files at 50 lines with a remainder line", () => {
+    const status = Array.from({ length: 80 }, (_, i) => ` M f${i}.ts`).join("\n");
+    const md = render({ git: { status, diffStat: "" } });
+    expect(md).toContain("f49.ts");
+    expect(md).not.toContain("f50.ts");
+    expect(md).toContain("… and 30 more");
+  });
+
+  it("omits the resume command for an unsafe session id and renders bad todo status", () => {
+    const md = render({ sessionId: "a b; rm -rf" });
+    expect(md).not.toContain("claude --resume");
+    expect(md).toContain("#budget +$2");
+    const p = transcript([
+      use("TodoWrite", { todos: [{ content: "x" }, { content: "y", status: 3 }] }, "1"),
+    ]);
+    expect(lastTodos(p)).toEqual(["[ ] x", "[ ] y"]);
+  });
+
+  it("accepts pre-read tail records in both helpers", () => {
+    const p = transcript([
+      use("TodoWrite", { todos: [{ content: "a", status: "pending" }] }, "1"),
+      use("Bash", { command: "ls" }, "2"),
+    ]);
+    const recs = readTail(p);
+    expect(lastTodos(recs)).toEqual(["[pending] a"]);
+    expect(recentToolCalls(recs, 1)).toEqual([{ tool: "Bash", args: { command: "ls" } }]);
+  });
+
+  it("survives a multibyte char straddling the 2 MB tail boundary", () => {
+    const size = 2 * 1024 * 1024;
+    const mid = JSON.stringify({ type: "user", message: { content: "é".repeat(size / 2 + 100) } });
+    let midBoundary = 0;
+    for (let shift = 0; shift < 2; shift++) {
+      const command = "k".repeat(shift + 1);
+      const tail = JSON.stringify(use("Bash", { command }, "k"));
+      const buf = Buffer.from(`${mid}\n${tail}\n`);
+      const at = buf.length - size;
+      if (((buf[at] as number) & 0xc0) === 0x80) midBoundary++; // boundary splits a 2-byte char
+      const p = join(root, `mb${shift}.jsonl`);
+      writeFileSync(p, buf);
+      expect(recentToolCalls(p, 1)).toEqual([{ tool: "Bash", args: { command } }]);
+    }
+    expect(midBoundary).toBe(1);
   });
 });
 
@@ -315,6 +392,26 @@ describe("pendingHandoff / markConsumed", () => {
     );
     write("nometa.md", 100, fb, "# no metadata");
     expect(pendingHandoff(ctx, cwd, NOW)?.path).toBe(mine);
+  });
+
+  it("round-trips a cwd containing -->, a newline and a quote through the fallback dir", () => {
+    const odd = `${root}/we"ird --> \n dir`;
+    const fb = join(ctx.leashHome, "handoffs");
+    const mine = write(
+      "odd.md",
+      0,
+      fb,
+      renderHandoff({
+        reason: "plan",
+        detail: "d",
+        sessionId: "s",
+        cwd: odd,
+        recentCalls: [],
+        now: NOW,
+      }),
+    );
+    expect(pendingHandoff(ctx, odd, NOW)?.path).toBe(mine);
+    expect(pendingHandoff(ctx, cwd, NOW)).toBeUndefined();
   });
 
   it("prunes consumed entries whose files no longer exist", () => {
