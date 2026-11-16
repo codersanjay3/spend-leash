@@ -85,7 +85,7 @@ describe("init", () => {
     expect(plan.record.statusLine?.original).toBeNull();
     expect(readInstallRecord(ctx)?.statusLine?.original).toBeNull();
     expect(json(join(ctx.leashHome, "statusline.json"))).toEqual({ original: null });
-    expect(cmd("Stop")).toBe(`node "${ctx.leashHome}/hook.mjs" Stop`);
+    expect(cmd("Stop")).toBe(`node "${ctx.leashHome.replaceAll("\\", "/")}/hook.mjs" Stop`);
   });
 
   it("wraps an existing user statusLine and records the original", () => {

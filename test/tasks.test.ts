@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { buildSync } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/config.js";
@@ -423,7 +424,7 @@ describe("session state I/O", () => {
       const child = join(work, "child.mjs");
       writeFileSync(
         child,
-        `import { readSession, writeSession, withSessionLock } from ${JSON.stringify(bundle)};
+        `import { readSession, writeSession, withSessionLock } from ${JSON.stringify(pathToFileURL(bundle).href)};
 const ctx = { home: ${JSON.stringify(work)}, leashHome: ${JSON.stringify(work)}, now: () => new Date() };
 withSessionLock(ctx, "ctr", () => {
   const s = readSession(ctx, "ctr");
