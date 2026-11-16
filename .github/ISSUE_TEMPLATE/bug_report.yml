@@ -20,7 +20,7 @@ body:
   - type: textarea
     id: errors
     attributes:
-      label: Last lines of ~/.spend-leash/errors.log
+      label: Last lines of ~/.spend-leash/errors.log (check for anything private first)
       description: Optional. Redact anything private.
       render: text
     validations:

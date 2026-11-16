@@ -62,6 +62,8 @@ Example: `#budget $5 refactor the auth module to use sessions`
 
 **After a budget stop, a plain prompt continues the same task.** If you reply "continue" without a directive, the task keeps its old baseline and limit, so the next tool call stops again. This is deliberate: a budget you can walk past by typing "go on" is not a budget. Use `#budget +$2` to give it more, or `#budget new` to start over. After a loop stop the task also continues, with the loop history cleared. The plan guard stops at most once per 5-hour window per session; later prompts in that window run with a one-line warning.
 
+**After a plan stop, only `#budget +$N` continues the stopped task.** A plain prompt, `#budget $N` or `#budget off` starts a new task, and the plan guard does not fire again in that 5-hour window. `#budget plan-off` turns the guard off for the rest of the session.
+
 ## Config reference
 
 `~/.spend-leash/config.json` is created by `init` with these defaults. Set `SPEND_LEASH_HOME` to move the whole `~/.spend-leash` directory.
@@ -103,7 +105,7 @@ npx spend-leash status
 npx spend-leash report [-n 20] [--today] [--json]
 ```
 
-- `init` shows what it will change, asks, backs up the settings file, and writes atomically. `--scope` picks which settings file gets the hooks (default `user`, `~/.claude/settings.json`). `--budget` sets the default task limit: `2` or `$2` for dollars (quote the `$` in your shell), `10%` for plan percent. `-y` skips the question. Running it twice changes nothing.
+- `init` shows what it will change, asks, backs up the settings file, and writes atomically. `--scope` picks which settings file gets the hooks (default `user`, `~/.claude/settings.json`). `--budget` sets the default task limit: `2` or `$2` for dollars (quote the `$` in your shell), `10%` for plan percent. `-y` skips the question. Running it again leaves your settings unchanged and refreshes the hook files.
 - `uninstall` removes exactly what `init` recorded and puts your original `statusLine` back. If you changed your status line since, yours is left alone and you get a note.
 - `status` shows each recent session's task: spend against limit, last known 5-hour percent, outcome, and whether plan data is available. Running `npx spend-leash` with no command does the same.
 - `report` lists recent tasks from the ledger with time, outcome, dollars and prompt. `-n` sets how many (default 20), `--today` limits to today, `--json` prints machine-readable output.
@@ -140,11 +142,11 @@ No network calls and no telemetry. spend-leash only reads files on your machine 
 | `~/.claude/settings.json` (or the scope you chose) | the hooks and status line, with a `.bak-<timestamp>` backup | unchanged |
 | `~/.spend-leash/hook.mjs`, `statusline.mjs`, `config.json`, `install.json`, `statusline.json` | the installed code, your config and what `init` changed | default |
 | `~/.spend-leash/tasks.jsonl` | one line per task: prompt (first 200 characters, redacted), cost, tokens, outcome | `0600` |
-| `~/.spend-leash/sessions/*.json` | per-session task state and statusline snapshots | `0600` |
-| `~/.spend-leash/errors.log` | one line per swallowed error | `0600` |
+| `~/.spend-leash/sessions/*.json` | per-session task state (first 200 characters of each prompt, unredacted) and statusline snapshots | `0600` |
+| `~/.spend-leash/errors.log` | one line per swallowed error (internal error messages, not redacted) | `0600` |
 | `<project>/.spend-leash/handoffs/*.md` | handoff files | `0600` (directory `0700`) |
 
-Modes apply on POSIX. Secrets in prompts and tool arguments are redacted by key name and by common token shapes, but redaction is not perfect. Add `.spend-leash/` to your `.gitignore` before handoff files end up in a commit.
+Modes apply on POSIX. Secrets in prompts and tool arguments are redacted by key name and by common token shapes before they go into the ledger and handoff files, but redaction is not perfect. Session state keeps the first 200 characters of each prompt unredacted so `status` can show it, and `errors.log` holds internal error messages as they are. Add `.spend-leash/` to your `.gitignore` before handoff files end up in a commit.
 
 ## Sibling project
 

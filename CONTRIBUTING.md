@@ -46,6 +46,6 @@ Requires Node 20 or newer. Build before testing: the integration tests run the b
 
 AI-assisted contributions are welcome. Say so in the PR description, and make sure you have read and can explain every line you submit.
 
-I aim to reply to every issue and pull request within one day. If you have heard nothing after three days, ping the thread.
+I aim to reply to every issue and pull request within one day.
 
 Looking for something to start with? See `docs/good-first-issues.md`.

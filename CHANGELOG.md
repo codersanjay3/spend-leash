@@ -41,7 +41,7 @@ All notable changes to this project are documented here. The format follows
 - Per-session state is written atomically under a short lock so parallel subagent hooks do
   not corrupt it.
 - Ledger, session state, `errors.log` and handoff files are created with mode 0600 (POSIX).
-- Prompts and tool arguments are redacted before they are written.
+- Prompts and tool arguments are redacted before they are written to the ledger and handoff files.
 - No network calls and no telemetry.
 
 ### Requirements
