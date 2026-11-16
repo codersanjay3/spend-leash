@@ -18,6 +18,7 @@
     "lint": "biome check src test site",
     "format": "biome check --write src test site",
     "site:build": "node scripts/build-site.mjs",
+    "demo:record": "npm run build && node demo/record.mjs",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run lint && npm test && npm run build"
   },

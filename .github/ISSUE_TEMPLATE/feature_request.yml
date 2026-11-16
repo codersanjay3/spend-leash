@@ -1,0 +1,18 @@
+name: Feature request
+description: Suggest a budget rule, command or integration
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What kind of runaway spend or lost work are you trying to prevent?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should spend-leash do? A config key, a `#budget` directive, a command, or a different agent CLI?
+    validations:
+      required: false

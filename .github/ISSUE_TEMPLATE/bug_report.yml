@@ -1,0 +1,41 @@
+name: Bug report
+description: Something did not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Commands, your prompt directive if any, and (redacted) config. Never paste tokens or private prompts.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: errors
+    attributes:
+      label: Last lines of ~/.spend-leash/errors.log
+      description: Optional. Redact anything private.
+      render: text
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: spend-leash version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Node version, OS and Claude Code version
+      placeholder: "Node 22, macOS 14, Claude Code 2.1.x"
+    validations:
+      required: true
