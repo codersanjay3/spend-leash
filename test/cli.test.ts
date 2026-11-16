@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { errorsLog, ledgerPath, makeCtx, sessionDir } from "../src/paths.js";
@@ -22,10 +24,18 @@ describe("cli", () => {
   it("unknown command exits 2", () => {
     expect(run("bogus").status).toBe(2);
   });
-  it("stub commands exit 1", () => {
-    const r = run("status");
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain("not implemented");
+  it("no args with nothing installed explains init (temp HOME)", () => {
+    const home = mkdtempSync(join(tmpdir(), "sl-cli-"));
+    try {
+      const r = spawnSync(process.execPath, [cli], {
+        encoding: "utf8",
+        env: { ...process.env, HOME: home, USERPROFILE: home, SPEND_LEASH_HOME: join(home, "sl") },
+      });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain("npx spend-leash init");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 
