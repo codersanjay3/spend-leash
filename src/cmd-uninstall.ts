@@ -29,7 +29,7 @@ export async function cmdUninstall(argv: string[], env: CommandEnv): Promise<num
   }
   for (const w of plan.warnings) console.log(`note: ${w}`);
 
-  if (!(await approve(Boolean(f.yes), "Apply these changes?"))) {
+  if (!(await approve(Boolean(f.yes), "Apply these changes?", env.ask))) {
     console.log("Aborted. Nothing changed.");
     return 1;
   }
@@ -40,7 +40,11 @@ export async function cmdUninstall(argv: string[], env: CommandEnv): Promise<num
   }
   for (const name of ["hook.mjs", "statusline.mjs"]) {
     const p = join(ctx.leashHome, name);
-    if (existsSync(p)) unlinkSync(p);
+    try {
+      if (existsSync(p)) unlinkSync(p);
+    } catch (e) {
+      console.log(`note: could not remove ${p}: ${(e as Error).message}; delete it by hand`);
+    }
   }
   console.log(pc.green("Done. spend-leash is uninstalled."));
   console.log(

@@ -10,6 +10,8 @@ export interface CommandEnv {
   ctx: Ctx;
   /** The project directory (process.cwd()). */
   cwd: string;
+  /** Replaces the interactive prompt (tests). */
+  ask?: (question: string) => Promise<boolean>;
 }
 
 export function stripPrefix(msg: string): string {
@@ -60,8 +62,13 @@ async function confirm(question: string): Promise<boolean> {
 }
 
 /** `--yes` -> yes. No TTY and no `--yes` -> throws a usage error. Otherwise asks. */
-export async function approve(yes: boolean, question: string): Promise<boolean> {
+export async function approve(
+  yes: boolean,
+  question: string,
+  ask?: (question: string) => Promise<boolean>,
+): Promise<boolean> {
   if (yes) return true;
+  if (ask) return ask(question);
   if (!process.stdin.isTTY) throw new UsageError("Run with --yes to apply without a prompt.");
   return confirm(question);
 }

@@ -19,30 +19,39 @@ import { writeJsonAtomic } from "./settings.js";
 
 const HOOK_FILES = ["hook.mjs", "statusline.mjs"];
 
-function copyHookFiles(leashHome: string): void {
-  const here = dirname(fileURLToPath(import.meta.url));
+const distDir = () => dirname(fileURLToPath(import.meta.url));
+
+/** Throws when a hook file is missing next to the CLI, so a broken install fails fast. */
+export function checkHookFiles(srcDir: string = distDir()): void {
   for (const f of HOOK_FILES) {
-    if (!existsSync(join(here, f))) {
-      throw new Error(`${join(here, f)} not found; reinstall spend-leash`);
-    }
+    if (!existsSync(join(srcDir, f)))
+      throw new Error(`${join(srcDir, f)} not found; reinstall spend-leash`);
   }
+}
+
+export function copyHookFiles(leashHome: string, srcDir: string = distDir()): void {
+  checkHookFiles(srcDir);
   mkdirSync(leashHome, { recursive: true, mode: 0o700 });
-  for (const f of HOOK_FILES) copyFileSync(join(here, f), join(leashHome, f));
+  for (const f of HOOK_FILES) copyFileSync(join(srcDir, f), join(leashHome, f));
+}
+
+function readConfigObject(configPath: string): Record<string, unknown> | undefined {
+  try {
+    const v: unknown = JSON.parse(readFileSync(configPath, "utf8"));
+    if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+    return v as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Creates config.json with defaults when absent; with a budget, updates only that key. */
-function writeConfig(configPath: string, budget: Budget | undefined, notes: string[]): void {
+function writeConfig(configPath: string, budget: Budget | undefined): void {
   let cfg: Record<string, unknown>;
   if (existsSync(configPath)) {
-    try {
-      const v: unknown = JSON.parse(readFileSync(configPath, "utf8"));
-      if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("not an object");
-      cfg = v as Record<string, unknown>;
-    } catch {
-      if (budget) notes.push(`${configPath} is not valid JSON; budget not written, fix it by hand`);
-      return;
-    }
-    if (!budget) return;
+    const existing = readConfigObject(configPath);
+    if (!existing || !budget) return; // invalid + budget was refused earlier
+    cfg = existing;
   } else {
     cfg = structuredClone(DEFAULT_CONFIG) as unknown as Record<string, unknown>;
   }
@@ -70,14 +79,19 @@ export async function cmdInit(argv: string[], env: CommandEnv): Promise<number> 
   const budget = f.budget === undefined ? undefined : parseBudget(f.budget);
   const { ctx, cwd } = env;
 
+  const configPath = join(ctx.leashHome, "config.json");
+  if (budget && existsSync(configPath) && !readConfigObject(configPath)) {
+    throw new Error(`${configPath} is not valid JSON; fix or delete it, then re-run`);
+  }
+  checkHookFiles(); // fail fast, before anything is shown or changed
+
   const plan = planInstall(ctx, { scope, project: cwd });
   const { config, notes } = loadConfig(ctx, cwd);
   const allNotes = [...plan.notes, ...notes];
-  const configPath = join(ctx.leashHome, "config.json");
 
   if (plan.changes.length === 0) {
     copyHookFiles(ctx.leashHome);
-    writeConfig(configPath, budget, allNotes);
+    writeConfig(configPath, budget);
     for (const n of allNotes) console.log(`note: ${n}`);
     console.log("spend-leash is already installed; hook files refreshed.");
     return 0;
@@ -102,20 +116,18 @@ export async function cmdInit(argv: string[], env: CommandEnv): Promise<number> 
     console.log("note: plan % budgets need a Pro/Max/Ultra status line; otherwise only $ applies");
   }
 
-  if (!(await approve(Boolean(f.yes), "Apply these changes?"))) {
+  if (!(await approve(Boolean(f.yes), "Apply these changes?", env.ask))) {
     console.log("Aborted. Nothing changed.");
     return 1;
   }
 
   copyHookFiles(ctx.leashHome); // hooks must never point at missing files
+  writeConfig(configPath, budget); // before settings, so a failure here leaves them untouched
   try {
     applyInstall(ctx, plan);
   } catch (e) {
     throw new Error(stripPrefix((e as Error).message));
   }
-  const after: string[] = [];
-  writeConfig(configPath, budget, after);
-  for (const n of after) console.log(`note: ${n}`);
 
   const final = loadConfig(ctx, cwd).config.task;
   console.log("");

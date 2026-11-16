@@ -1,19 +1,42 @@
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { type CommandEnv, parseFlags, truncate, UsageError, usd } from "./cli-common.js";
 import { ledgerPath } from "./paths.js";
 import type { LedgerLine } from "./types.js";
 
-function readLedger(path: string): LedgerLine[] {
-  let text: string;
+/** Calls `onLine` for each line, reading in chunks so memory does not scale with file size. */
+function eachLine(path: string, onLine: (line: string) => void): void {
+  let fd: number;
   try {
-    text = readFileSync(path, "utf8");
-  } catch {
-    return [];
+    fd = openSync(path, "r");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw new Error(`cannot read ${path}: ${(e as Error).message}`);
   }
+  try {
+    const dec = new StringDecoder("utf8");
+    const buf = Buffer.alloc(64 * 1024);
+    let rest = "";
+    for (;;) {
+      const n = readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      const parts = (rest + dec.write(buf.subarray(0, n))).split("\n");
+      rest = parts.pop() ?? "";
+      for (const l of parts) onLine(l);
+    }
+    onLine(rest + dec.end());
+  } catch (e) {
+    throw new Error(`cannot read ${path}: ${(e as Error).message}`);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function readLedger(path: string): LedgerLine[] {
   // dedupe by taskId, keeping the LAST line
   const byId = new Map<string, LedgerLine>();
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
+  eachLine(path, (line) => {
+    if (!line.trim()) return;
     try {
       const v = JSON.parse(line) as Partial<LedgerLine> | null;
       if (
@@ -31,7 +54,7 @@ function readLedger(path: string): LedgerLine[] {
     } catch {
       /* bad line: skip */
     }
-  }
+  });
   return [...byId.values()];
 }
 

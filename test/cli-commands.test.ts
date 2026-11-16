@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -11,7 +12,10 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { checkHookFiles, copyHookFiles } from "../src/cmd-init.js";
+import { cmdUninstall } from "../src/cmd-uninstall.js";
+import { makeCtx } from "../src/paths.js";
 
 const cli = resolve(dirname(fileURLToPath(import.meta.url)), "..", "dist", "cli.js");
 let root: string;
@@ -130,7 +134,65 @@ describe("init", () => {
   });
 });
 
+describe("init safety", () => {
+  it("--budget with an invalid config.json exits 1 before changing settings", () => {
+    put(join(leash, "config.json"), "{ nope");
+    const r = run(["init", "--yes", "--budget", "5"]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(
+      `spend-leash: ${join(leash, "config.json")} is not valid JSON; fix or delete it, then re-run`,
+    );
+    expect(r.stdout).not.toContain("Done.");
+    expect(existsSync(userSettings())).toBe(false);
+    expect(rd(join(leash, "config.json"))).toBe("{ nope");
+  });
+
+  it("invalid config.json without --budget installs and prints the note once", () => {
+    put(join(leash, "config.json"), "{ nope");
+    const r = run(["init", "--yes"]);
+    expect(r.status).toBe(0);
+    expect(r.stdout.match(/not valid JSON/g)).toHaveLength(1);
+  });
+
+  it("missing hook files fail fast with a clear error", () => {
+    const empty = join(root, "emptydist");
+    mkdirSync(empty);
+    expect(() => checkHookFiles(empty)).toThrow(/hook\.mjs not found/);
+    expect(() => copyHookFiles(join(root, "lh"), empty)).toThrow(/not found/);
+    expect(existsSync(join(root, "lh"))).toBe(false);
+  });
+});
+
 describe("uninstall", () => {
+  it("answering no changes nothing and exits 1", async () => {
+    run(["init", "--yes"]);
+    const before = rd(userSettings());
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const code = await cmdUninstall([], {
+        ctx: makeCtx({ HOME: home, SPEND_LEASH_HOME: leash }),
+        cwd: proj,
+        ask: async () => false,
+      });
+      expect(code).toBe(1);
+    } finally {
+      log.mockRestore();
+    }
+    expect(rd(userSettings())).toBe(before);
+    expect(existsSync(join(leash, "hook.mjs"))).toBe(true);
+  });
+
+  it("a hook file that cannot be removed is a note, not a failure", () => {
+    run(["init", "--yes"]);
+    rmSync(join(leash, "hook.mjs"));
+    mkdirSync(join(leash, "hook.mjs", "sub"), { recursive: true });
+    const r = run(["uninstall", "--yes"]);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("note: could not remove");
+    expect(r.stdout).toContain("delete it by hand");
+    expect(existsSync(userSettings())).toBe(false);
+  });
+
   it("nothing installed: exit 0", () => {
     const r = run(["uninstall", "--yes"]);
     expect(r.status).toBe(0);
@@ -234,6 +296,18 @@ describe("status", () => {
     expect(r.stdout).toContain("plan %: available");
   });
 
+  it("a stale snapshot still shows the % but plan data is unavailable", () => {
+    run(["init", "--yes"]);
+    seedSession(
+      "sess-stale",
+      { task: task() },
+      { at: new Date(Date.now() - 20 * 60_000).toISOString(), fiveHourPct: 42 },
+    );
+    const r = run(["status"]);
+    expect(r.stdout).toMatch(/5h 42% \(20m ago\)/);
+    expect(r.stdout).toContain("plan %: unavailable");
+  });
+
   it("omits missing pieces, skips sessions older than 24h, caps at 10, newest first", () => {
     run(["init", "--yes"]);
     for (let i = 0; i < 12; i++) {
@@ -323,6 +397,29 @@ describe("report", () => {
     );
     const j = JSON.parse(run(["report", "--json", "--today"]).stdout);
     expect(j.tasks.map((t: { taskId: string }) => t.taskId)).toEqual(["now"]);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "an unreadable ledger exits 1 instead of looking empty",
+    () => {
+      ledger(L({}));
+      chmodSync(join(leash, "tasks.jsonl"), 0o000);
+      try {
+        const r = run(["report"]);
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain(`spend-leash: cannot read ${join(leash, "tasks.jsonl")}`);
+        expect(r.stdout).not.toContain("No tasks recorded");
+      } finally {
+        chmodSync(join(leash, "tasks.jsonl"), 0o600);
+      }
+    },
+  );
+
+  it("reads a ledger with a line spanning chunk boundaries", () => {
+    ledger(
+      ...Array.from({ length: 3000 }, (_, i) => L({ taskId: `t${i}`, prompt: "é".repeat(40) })),
+    );
+    expect(JSON.parse(run(["report", "--json", "-n", "5000"]).stdout).totals.tasks).toBe(3000);
   });
 
   it("truncates the prompt to 50 chars; empty ledger prints a hint", () => {
