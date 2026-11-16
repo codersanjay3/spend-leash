@@ -97,14 +97,35 @@ function sanitize(v: unknown, sessionId: string): SessionState | undefined {
   return out;
 }
 
+/**
+ * Never throws. A missing file is a normal fresh state; an unreadable, malformed or
+ * mismatched file yields a fresh default state plus `corrupt` (the reason), so callers can log it.
+ */
+export function readSessionChecked(
+  ctx: Ctx,
+  sessionId: string,
+): { state: SessionState; corrupt?: string } {
+  let text: string;
+  try {
+    text = readFileSync(file(ctx, sessionId, ".json"), "utf8");
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR"
+      ? { state: defaultState(sessionId) }
+      : { state: defaultState(sessionId), corrupt: `unreadable (${code ?? "error"})` };
+  }
+  try {
+    const st = sanitize(JSON.parse(text) as unknown, sessionId);
+    if (st) return { state: st };
+    return { state: defaultState(sessionId), corrupt: "unexpected shape" };
+  } catch {
+    return { state: defaultState(sessionId), corrupt: "not valid JSON" };
+  }
+}
+
 /** Never throws: a missing, unreadable or malformed file yields a fresh default state. */
 export function readSession(ctx: Ctx, sessionId: string): SessionState {
-  try {
-    const raw: unknown = JSON.parse(readFileSync(file(ctx, sessionId, ".json"), "utf8"));
-    return sanitize(raw, sessionId) ?? defaultState(sessionId);
-  } catch {
-    return defaultState(sessionId);
-  }
+  return readSessionChecked(ctx, sessionId).state;
 }
 
 export function atomicWrite(dir: string, target: string, data: string): void {
