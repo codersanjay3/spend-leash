@@ -233,6 +233,23 @@ describe("startTask", () => {
     expect(s.loop).toEqual({ calls: [], failures: {} });
   });
 
+  it("after stopped-loop set/off/add continue the same task and clear loop history", () => {
+    const dirs: Directive[] = [{ kind: "set", usd: 9 }, { kind: "off" }, { kind: "add", usd: 2 }];
+    for (const d of dirs) {
+      const s = start(stopped("stopped-loop", { baseUsd: 0.25 }), d, { spendUsd: 9 });
+      expect(s.task, d.kind).toMatchObject({ id: "abcdef12-1", baseUsd: 0.25, warned: false });
+      expect(s.task?.outcome).toBeUndefined();
+      expect(s.loop, d.kind).toEqual({ calls: [], failures: {} });
+      expect(s.taskSeq).toBe(1);
+    }
+  });
+
+  it("set/off after stopped-plan start a new task", () => {
+    for (const d of [{ kind: "set", usd: 9 }, { kind: "off" }] as Directive[]) {
+      expect(start(stopped("stopped-plan"), d).task?.id, d.kind).toBe("abcdef12-2");
+    }
+  });
+
   it("plan-off sets planGuard.off and otherwise behaves like no directive", () => {
     const s = start(stopped("completed"), { kind: "plan-off" });
     expect(s.planGuard.off).toBe(true);
@@ -262,6 +279,13 @@ describe("taskSpend and isFresh", () => {
     expect(taskSpend(s, 1, snap(40), NOW)).toEqual({ usd: 0, planPct: 0 });
     expect(s.task?.basePlanPct).toBe(40);
     expect(taskSpend(s, 1, snap(52), NOW).planPct).toBe(12);
+  });
+
+  it("a 5-hour window reset mid-task re-baselines to 0 instead of going negative", () => {
+    const s = start(fresh(), undefined, { snapshot: snap(60) });
+    expect(taskSpend(s, 1, snap(5), NOW)).toEqual({ usd: 0, planPct: 5 });
+    expect(s.task?.basePlanPct).toBe(0);
+    expect(taskSpend(s, 1, snap(8), NOW).planPct).toBe(8);
   });
 
   it("stale snapshot (11 min) gives planPct null and does not baseline", () => {
@@ -301,6 +325,35 @@ describe("session state I/O", () => {
     expect(readSession(ctx, "s1")).toEqual(want);
   });
 
+  it("drops only the invalid sub-object of a structurally bad session file", () => {
+    const good = start({ ...fresh(), sessionId: "s8" }, { kind: "set", usd: 4 });
+    const put = (patch: object) =>
+      writeFileSync(join(sessionDir(ctx), "s8.json"), JSON.stringify({ ...good, ...patch }));
+    const t = good.task as object;
+    put({ task: { ...t, limitUsd: "5" } });
+    expect(readSession(ctx, "s8").task).toBeUndefined();
+    expect(readSession(ctx, "s8").taskSeq).toBe(1);
+    put({ task: { ...t, baseTokens: undefined } });
+    expect(readSession(ctx, "s8").task).toBeUndefined();
+    put({ loop: { calls: "x", failures: {} } });
+    expect(readSession(ctx, "s8").loop).toEqual({ calls: [], failures: {} });
+    expect(readSession(ctx, "s8").task).toEqual(good.task);
+    put({ loop: { calls: [1, 2], failures: {} } });
+    expect(readSession(ctx, "s8").loop).toEqual({ calls: [], failures: {} });
+    put({ loop: { calls: [], failures: { a: "x" } } });
+    expect(readSession(ctx, "s8").loop).toEqual({ calls: [], failures: {} });
+    put({ taskSeq: "x" });
+    expect(readSession(ctx, "s8").taskSeq).toBe(0);
+    put({ taskSeq: -1 });
+    expect(readSession(ctx, "s8").taskSeq).toBe(0);
+    put({ spend: {} });
+    expect(readSession(ctx, "s8").spend).toBeUndefined();
+    put({ planGuard: { off: "no" } });
+    expect(readSession(ctx, "s8").planGuard).toEqual({ off: false });
+    put({ spend: { files: {} } });
+    expect(readSession(ctx, "s8")).toEqual({ ...good, spend: { files: {} } });
+  });
+
   it("round-trips, atomically, with private modes", () => {
     const s = start({ ...fresh(), sessionId: "s2" }, { kind: "set", usd: 4 });
     const own: Ctx = { ...ctx, leashHome: join(dir, "private") };
@@ -326,6 +379,11 @@ describe("session state I/O", () => {
       JSON.stringify({ at: NOW.toISOString(), fiveHourPct: 12 }),
     );
     expect(readSnapshot(ctx, "s3")).toEqual({ at: NOW.toISOString(), fiveHourPct: 12 });
+    writeFileSync(
+      join(sessionDir(ctx), "s9.statusline.json"),
+      JSON.stringify({ at: "t", fiveHourPct: "9", costUsd: 1, model: 5 }),
+    );
+    expect(readSnapshot(ctx, "s9")).toEqual({ at: "t", costUsd: 1 });
     writeFileSync(join(sessionDir(ctx), "s4.statusline.json"), "oops");
     expect(readSnapshot(ctx, "s4")).toBeUndefined();
   });

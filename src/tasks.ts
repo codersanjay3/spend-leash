@@ -118,30 +118,29 @@ export function startTask(s: SessionState, o: StartOpts): SessionState {
 
   if (!prev || d?.kind === "new") return fresh();
 
-  if (prev.outcome === "stopped-budget") {
-    if (!d) return keep(prev);
+  const addTo = (t: Task, usd: number) => (t.limitUsd ?? o.config.task.usd ?? 0) + usd;
+
+  // stopped-budget and stopped-loop continue the same task (same baseline); a loop stop also
+  // clears loop history, since a stale history would re-trip the breaker on the next call.
+  if (prev.outcome === "stopped-budget" || prev.outcome === "stopped-loop") {
+    const loop = prev.outcome === "stopped-loop" ? { calls: [], failures: {} } : base.loop;
+    if (!d) return keep(prev.outcome === "stopped-loop" ? resume(prev) : prev, loop);
     if (d.kind === "set") {
       return keep(
         resume(prev, {
           limitUsd: d.usd ?? prev.limitUsd,
           limitPlanPct: d.planPct ?? prev.limitPlanPct,
         }),
+        loop,
       );
     }
-    if (d.kind === "off") return keep(resume(prev, { limitUsd: null, limitPlanPct: null }));
-    if (d.kind === "add") {
-      return keep(resume(prev, { limitUsd: (prev.limitUsd ?? o.config.task.usd ?? 0) + d.usd }));
-    }
+    if (d.kind === "off") return keep(resume(prev, { limitUsd: null, limitPlanPct: null }), loop);
+    if (d.kind === "add") return keep(resume(prev, { limitUsd: addTo(prev, d.usd) }), loop);
   }
 
-  if (prev.outcome === "stopped-plan" || prev.outcome === "stopped-loop") {
-    if (d?.kind === "add") {
-      return keep(resume(prev, { limitUsd: (prev.limitUsd ?? o.config.task.usd ?? 0) + d.usd }));
-    }
-    // Its budget was not the problem: a plain prompt carries on with loop history cleared.
-    if (!d && prev.outcome === "stopped-loop") {
-      return keep(resume(prev), { calls: [], failures: {} });
-    }
+  // stopped-plan: only `add` continues it; set/off start a new task (deliberate choice).
+  if (prev.outcome === "stopped-plan" && d?.kind === "add") {
+    return keep(resume(prev, { limitUsd: addTo(prev, d.usd) }));
   }
 
   return fresh();
@@ -165,6 +164,11 @@ export function taskSpend(
   if (t.basePlanPct === null) {
     t.basePlanPct = pct;
     return { usd, planPct: 0 };
+  }
+  if (pct < t.basePlanPct) {
+    // The 5-hour window reset mid-task: everything in the new window is this task's.
+    t.basePlanPct = 0;
+    return { usd, planPct: pct };
   }
   return { usd, planPct: pct - t.basePlanPct };
 }

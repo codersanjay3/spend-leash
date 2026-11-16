@@ -11,7 +11,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { type Ctx, sessionDir } from "./paths.js";
-import type { SessionState, Snapshot } from "./tasks.js";
+import type { SessionState, Snapshot, Task } from "./tasks.js";
+import type { SpendCache } from "./transcript.js";
 
 export { isFresh } from "./tasks.js";
 
@@ -40,21 +41,66 @@ function defaultState(sessionId: string): SessionState {
   };
 }
 
-function validShape(v: unknown, sessionId: string): v is SessionState {
-  if (!isObj(v) || v.sessionId !== sessionId || typeof v.cwd !== "string") return false;
-  if (!isObj(v.loop) || !Array.isArray(v.loop.calls) || !isObj(v.loop.failures)) return false;
-  if (!isObj(v.planGuard) || typeof v.planGuard.off !== "boolean") return false;
-  if (v.task !== undefined && !isObj(v.task)) return false;
-  if (v.spend !== undefined && !isObj(v.spend)) return false;
-  return v.taskSeq === undefined || typeof v.taskSeq === "number";
+const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const numOrNull = (v: unknown) => v === null || fin(v);
+const OUTCOMES = ["completed", "stopped-budget", "stopped-plan", "stopped-loop", "error"];
+
+function validTask(t: unknown): t is Task {
+  if (!isObj(t)) return false;
+  const bt = t.baseTokens;
+  return (
+    typeof t.id === "string" &&
+    typeof t.startedAt === "string" &&
+    typeof t.prompt === "string" &&
+    numOrNull(t.limitUsd) &&
+    numOrNull(t.limitPlanPct) &&
+    numOrNull(t.basePlanPct) &&
+    fin(t.baseUsd) &&
+    isObj(bt) &&
+    ["input", "output", "cacheWrite5m", "cacheWrite1h", "cacheRead"].every((k) => fin(bt[k])) &&
+    typeof t.warned === "boolean" &&
+    (t.outcome === undefined || (typeof t.outcome === "string" && OUTCOMES.includes(t.outcome))) &&
+    (t.reason === undefined || typeof t.reason === "string")
+  );
+}
+
+function validLoop(l: unknown): l is SessionState["loop"] {
+  return (
+    isObj(l) &&
+    Array.isArray(l.calls) &&
+    l.calls.every((c) => typeof c === "string") &&
+    isObj(l.failures) &&
+    Object.values(l.failures).every(fin)
+  );
+}
+
+function validPlanGuard(g: unknown): g is SessionState["planGuard"] {
+  return (
+    isObj(g) &&
+    typeof g.off === "boolean" &&
+    (g.trippedFor === undefined || typeof g.trippedFor === "string")
+  );
+}
+
+/** Keeps what is valid and drops only the bad sub-object. */
+function sanitize(v: unknown, sessionId: string): SessionState | undefined {
+  if (!isObj(v) || v.sessionId !== sessionId || typeof v.cwd !== "string") return undefined;
+  const out = defaultState(sessionId);
+  out.cwd = v.cwd;
+  if (fin(v.taskSeq) && Number.isInteger(v.taskSeq) && v.taskSeq >= 0) out.taskSeq = v.taskSeq;
+  if (validLoop(v.loop)) out.loop = v.loop;
+  if (validPlanGuard(v.planGuard)) out.planGuard = v.planGuard;
+  if (validTask(v.task)) out.task = v.task;
+  if (isObj(v.spend) && isObj(v.spend.files)) out.spend = v.spend as unknown as SpendCache;
+  if (typeof v.noPlanDataShown === "boolean") out.noPlanDataShown = v.noPlanDataShown;
+  return out;
 }
 
 /** Never throws: a missing, unreadable or malformed file yields a fresh default state. */
 export function readSession(ctx: Ctx, sessionId: string): SessionState {
   try {
     const raw: unknown = JSON.parse(readFileSync(file(ctx, sessionId, ".json"), "utf8"));
-    if (!validShape(raw, sessionId)) return defaultState(sessionId);
-    return { ...raw, taskSeq: raw.taskSeq ?? 0 };
+    return sanitize(raw, sessionId) ?? defaultState(sessionId);
   } catch {
     return defaultState(sessionId);
   }
@@ -129,7 +175,14 @@ export function withSessionLock<T>(ctx: Ctx, sessionId: string, fn: () => T): T 
 export function readSnapshot(ctx: Ctx, sessionId: string): Snapshot | undefined {
   try {
     const raw: unknown = JSON.parse(readFileSync(file(ctx, sessionId, ".statusline.json"), "utf8"));
-    return isObj(raw) && typeof raw.at === "string" ? (raw as unknown as Snapshot) : undefined;
+    if (!isObj(raw) || typeof raw.at !== "string") return undefined;
+    const out: Snapshot = { at: raw.at };
+    if (fin(raw.fiveHourPct)) out.fiveHourPct = raw.fiveHourPct;
+    if (typeof raw.fiveHourResetsAt === "string") out.fiveHourResetsAt = raw.fiveHourResetsAt;
+    if (fin(raw.sevenDayPct)) out.sevenDayPct = raw.sevenDayPct;
+    if (fin(raw.costUsd)) out.costUsd = raw.costUsd;
+    if (typeof raw.model === "string") out.model = raw.model;
+    return out;
   } catch {
     return undefined;
   }
