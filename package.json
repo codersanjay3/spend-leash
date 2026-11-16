@@ -1,0 +1,32 @@
+{
+  "name": "spend-leash",
+  "version": "0.1.0",
+  "description": "Per-task budgets, a loop breaker and handoff files for Claude Code, installed with one command.",
+  "type": "module",
+  "bin": { "spend-leash": "dist/cli.js" },
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
+  "keywords": ["claude-code", "budget", "hooks", "cost", "claude", "anthropic", "ai-agents", "cli"],
+  "license": "MIT",
+  "author": "codersanjay3",
+  "repository": { "type": "git", "url": "git+https://github.com/codersanjay3/spend-leash.git" },
+  "bugs": { "url": "https://github.com/codersanjay3/spend-leash/issues" },
+  "homepage": "https://github.com/codersanjay3/spend-leash#readme",
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
+    "test": "vitest run",
+    "lint": "biome check src test",
+    "format": "biome check --write src test",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run lint && npm test && npm run build"
+  },
+  "dependencies": { "picocolors": "^1.1.1" },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.7",
+    "@types/node": "^22.19.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
+  },
+  "overrides": { "esbuild": "^0.28.2" }
+}
