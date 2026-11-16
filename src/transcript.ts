@@ -85,6 +85,40 @@ function readHead(path: string, n: number): string {
   return readRange(path, 0, n).toString("latin1");
 }
 
+const USAGE_KEYS = ["input", "output", "cacheWrite5m", "cacheWrite1h", "cacheRead"] as const;
+
+function isObj(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function dict<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
+/** Returns a deep copy of a trusted-shape cursor, or undefined if the shape is invalid. */
+function cloneCursor(v: unknown): FileCursor | undefined {
+  if (!isObj(v)) return undefined;
+  const { offset, partial, ids, byModel, head } = v;
+  if (typeof offset !== "number" || !Number.isInteger(offset) || offset < 0) return undefined;
+  if (typeof partial !== "string") return undefined;
+  if (!Array.isArray(ids) || !ids.every((i) => typeof i === "string")) return undefined;
+  if (head !== undefined && typeof head !== "string") return undefined;
+  if (!isObj(byModel)) return undefined;
+  const bm = dict<UsageTotals>();
+  for (const m of Object.keys(byModel)) {
+    const u = byModel[m];
+    if (!isObj(u)) return undefined;
+    const t = { ...ZERO };
+    for (const k of USAGE_KEYS) {
+      const n = u[k];
+      if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return undefined;
+      t[k] = n;
+    }
+    bm[m] = t;
+  }
+  return { offset, partial, ids: [...(ids as string[])], byModel: bm, head };
+}
+
 function sameHead(path: string, c: FileCursor): boolean {
   if (c.offset === 0 || !c.head) return true;
   try {
@@ -131,6 +165,7 @@ export function readSpend(
   const files = listFiles(transcriptPath);
   const next: SpendCache = { files: {} };
   const sizes = new Map<string, number>();
+  const oldFiles = isObj(cache) && isObj(cache.files) ? cache.files : undefined;
 
   // Pass 1: stat; keep cursors only for files that still exist and did not shrink.
   for (const f of files) {
@@ -143,16 +178,8 @@ export function readSpend(
       continue;
     }
     sizes.set(f, size);
-    const old = cache?.files[f];
-    if (old && size >= old.offset && sameHead(f, old)) {
-      next.files[f] = {
-        offset: old.offset,
-        partial: old.partial,
-        ids: [...old.ids],
-        byModel: { ...old.byModel },
-        head: old.head,
-      };
-    }
+    const old = oldFiles ? cloneCursor(oldFiles[f]) : undefined;
+    if (old && size >= old.offset && sameHead(f, old)) next.files[f] = old;
   }
 
   const seen = new Set<string>();
@@ -162,7 +189,7 @@ export function readSpend(
   for (const f of files) {
     const size = sizes.get(f);
     if (size === undefined) continue;
-    const cur = next.files[f] ?? { offset: 0, partial: "", ids: [], byModel: {} };
+    const cur = next.files[f] ?? { offset: 0, partial: "", ids: [], byModel: dict<UsageTotals>() };
     next.files[f] = cur;
     if (size === cur.offset) continue;
     let chunk: Buffer;
@@ -184,7 +211,7 @@ export function readSpend(
     cur.offset += chunk.length;
   }
 
-  const totalsByModel: Record<string, UsageTotals> = {};
+  const totalsByModel = dict<UsageTotals>();
   let tokens = ZERO;
   for (const c of Object.values(next.files)) {
     for (const [m, u] of Object.entries(c.byModel)) {
@@ -196,8 +223,13 @@ export function readSpend(
   let estimated = false;
   for (const [m, u] of Object.entries(totalsByModel)) {
     const { price, estimated: est } = priceFor(m, prices);
-    usd += costUsd(u, price);
-    if (est && costUsd(u, price) > 0) estimated = true;
+    const c = costUsd(u, price);
+    if (!Number.isFinite(c)) {
+      estimated = true;
+      continue;
+    }
+    usd += c;
+    if (est && c > 0) estimated = true;
   }
   return { cache: next, usd, tokens, estimated };
 }

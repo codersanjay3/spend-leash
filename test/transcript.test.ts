@@ -98,9 +98,14 @@ describe("readSpend", () => {
   it("reads only appended bytes on a second call", () => {
     install();
     const first = readSpend(main);
-    // Corrupt the cached partial/ids would show up if the file were re-read: assert via offset.
     expect(first.cache.files[main].offset).toBeGreaterThan(0);
     appendFileSync(main, line("msg_9", "claude-sonnet-5-5", { i: 7, o: 11 }));
+    // Tamper: forget msg_1 in the cached ids. A re-read from offset 0 would count it
+    // again and the totals would grow; an incremental read never sees it.
+    const tampered = structuredClone(first.cache);
+    tampered.files[main].ids = tampered.files[main].ids.filter((i) => i !== "msg_1");
+    const redo = readSpend(main, tampered);
+    expect(redo.tokens.output).toBe(first.tokens.output + 11);
     const second = readSpend(main, first.cache);
     expect(second.tokens.input).toBe(first.tokens.input + 7);
     expect(second.tokens.output).toBe(first.tokens.output + 11);
@@ -234,6 +239,50 @@ describe("readSpend", () => {
     writeFileSync(join(subDir, "agent-b.jsonl"), line("m2", "claude-sonnet-5-5", { o: 2 }));
     const r2 = readSpend(main, r1.cache);
     expect(r2.tokens.output).toBe(3);
+  });
+});
+
+describe("readSpend malformed caches", () => {
+  const garbage = (m: string): unknown[] => [
+    null,
+    "x",
+    [],
+    {},
+    { files: null },
+    { files: [] },
+    { files: { [m]: null } },
+    { files: { [m]: { offset: 5 } } },
+    { files: { [m]: { offset: -3, ids: "x", byModel: [], partial: 7 } } },
+    { files: { [m]: { offset: 1.5, ids: [], byModel: {}, partial: "" } } },
+    { files: { [m]: { offset: 5, ids: [1], byModel: {}, partial: "" } } },
+    { files: { [m]: { offset: 5, ids: [], byModel: { a: { input: "x" } }, partial: "" } } },
+    { files: { [m]: { offset: 5, ids: [], byModel: {}, partial: "", head: 3 } } },
+    { files: { [m]: { offset: 1e9, ids: [], byModel: {}, partial: "" } } },
+  ];
+
+  it("gives the same totals as a fresh read and never throws", () => {
+    install();
+    const fresh = readSpend(main);
+    for (const g of garbage(main)) {
+      const r = readSpend(main, g as never);
+      expect(r.tokens).toEqual(fresh.tokens);
+      expect(r.usd).toBeCloseTo(fresh.usd, 10);
+    }
+  });
+
+  it("survives model names like constructor and __proto__", () => {
+    writeFileSync(
+      main,
+      line("a", "constructor", { i: 1000, o: 1000 }) +
+        line("b", "__proto__", { i: 1000, o: 1000 }) +
+        line("c", "toString", { i: 1 }),
+    );
+    const r = readSpend(main);
+    expect(Number.isFinite(r.usd)).toBe(true);
+    expect(r.usd).toBeGreaterThan(0);
+    expect(r.tokens.input).toBe(2001);
+    const again = readSpend(main, JSON.parse(JSON.stringify(r.cache)));
+    expect(again.tokens).toEqual(r.tokens);
   });
 });
 
