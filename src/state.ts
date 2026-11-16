@@ -18,7 +18,7 @@ import type { SpendCache } from "./transcript.js";
 export { isFresh } from "./tasks.js";
 
 const STALE_LOCK_MS = 5000;
-const LOCK_WAIT_MS = 200;
+const LOCK_WAIT_MS = 500;
 const LOCK_POLL_MS = 10;
 
 function safe(sessionId: string): string {
@@ -176,7 +176,7 @@ function sleep(ms: number): void {
  * (polling every 10 ms), removes a lock older than 5 s, and on timeout runs `fn` anyway
  * (without releasing a lock it does not own): a hook must never hang or fail on contention.
  */
-export function withSessionLock<T>(ctx: Ctx, sessionId: string, fn: () => T): T {
+export function withSessionLock<T>(ctx: Ctx, sessionId: string, fn: (held: boolean) => T): T {
   const lock = file(ctx, sessionId, ".lock");
   let held = false;
   try {
@@ -205,7 +205,7 @@ export function withSessionLock<T>(ctx: Ctx, sessionId: string, fn: () => T): T 
     // fall through: run unlocked
   }
   try {
-    return fn();
+    return fn(held);
   } finally {
     if (held) {
       try {

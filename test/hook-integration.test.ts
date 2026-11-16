@@ -122,14 +122,14 @@ describe("hook.mjs", () => {
     expect(j.stopReason).toBe("spend-leash: internal error (failClosed)");
   });
 
-  it("20 concurrent PreToolUse processes leave a valid session file", async () => {
+  async function concurrentPre(n: number) {
     hook(evt("UserPromptSubmit", { prompt: "go" }));
     const runs = Array.from(
-      { length: 20 },
+      { length: n },
       (_, i) =>
-        new Promise<{ code: number | null; stdout: string }>((res) => {
-          const p = execFile(process.execPath, [HOOK], { env: env() }, (err, stdout) =>
-            res({ code: err ? ((err as { code?: number }).code ?? 1) : 0, stdout }),
+        new Promise<number>((res) => {
+          const p = execFile(process.execPath, [HOOK], { env: env() }, (err) =>
+            res(err ? ((err as { code?: number }).code ?? 1) : 0),
           );
           p.stdin?.end(
             JSON.stringify(
@@ -138,11 +138,35 @@ describe("hook.mjs", () => {
           );
         }),
     );
-    const results = await Promise.all(runs);
-    for (const r of results) expect(r.code).toBe(0);
-    const parsed = JSON.parse(readFileSync(sessionFile(), "utf8"));
+    for (const code of await Promise.all(runs)) expect(code).toBe(0);
+    return JSON.parse(readFileSync(sessionFile(), "utf8"));
+  }
+
+  it("5 concurrent PreToolUse processes all land in the loop history", async () => {
+    const parsed = await concurrentPre(5);
+    expect(parsed.loop.calls.length).toBe(5);
+  });
+
+  it("20 concurrent PreToolUse processes leave a valid session file", async () => {
+    const parsed = await concurrentPre(20);
     expect(parsed.sessionId).toBe(SID);
     expect(parsed.task).toBeDefined();
+    expect(parsed.loop.calls.length).toBeGreaterThanOrEqual(1);
+    expect(parsed.loop.calls.length).toBeLessThanOrEqual(20);
+  });
+
+  it("failClosed + corrupt state denies PostToolBatch too, and keeps denying until a prompt", () => {
+    mkdirSync(join(leash, "sessions"), { recursive: true });
+    writeFileSync(sessionFile(), "{ nope");
+    writeFileSync(join(leash, "config.json"), JSON.stringify({ failClosed: true }));
+    const batch = JSON.parse(hook(evt("PostToolBatch")).stdout);
+    expect(batch.decision).toBe("block");
+    expect(batch.reason).toBe("spend-leash: internal error (failClosed)");
+    const tool = evt("PreToolUse", { tool_name: "Bash", tool_input: { command: "ls" } });
+    expect(hook(tool).stdout).toContain("deny");
+    expect(hook(tool).stdout).toContain("deny");
+    expect(hook(evt("UserPromptSubmit", { prompt: "go" })).stdout).toBe("");
+    expect(hook(tool).stdout).toBe("");
   });
 
   it("perf: 50 sequential PreToolUse calls on a 20 MB transcript", () => {

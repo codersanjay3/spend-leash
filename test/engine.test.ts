@@ -118,7 +118,7 @@ describe("engine", () => {
     expect(r.json?.hookSpecificOutput.permissionDecision).toBe("deny");
     expect(r.json?.hookSpecificOutput.permissionDecisionReason).toBe(msg);
     const m =
-      /^spend-leash: task budget \$2\.00 reached \(\$2\.50\)\. Handoff: (.+)\. Reply "#budget \+\$2" to continue this task or "#budget new" to start fresh\.$/.exec(
+      /^spend-leash: task budget \$2\.00 reached \(\$2\.50\)\. Handoff: (.+)\. Reply "#budget \+\$2\.00" to continue this task or "#budget new" to start fresh\.$/.exec(
         msg,
       );
     expect(m).not.toBeNull();
@@ -254,7 +254,7 @@ describe("engine", () => {
   it("planPct-only budget with no snapshot shows one systemMessage per session", () => {
     const a = prompt("#budget 10%");
     expect(a.json?.systemMessage).toContain("plan-% budget inactive");
-    const b = prompt("#budget new");
+    const b = prompt("#budget 10%");
     expect(b.json?.systemMessage).toBeUndefined();
   });
 
@@ -309,8 +309,125 @@ describe("engine", () => {
     expect(pre("Bash", same).json?.stopReason).toContain("task budget");
   });
 
-  it("a missing handoff dir never blocks the stop; unknown events are ignored", () => {
+  it("unknown events are ignored", () => {
     expect(run({ ...base(), hook_event_name: "Notification" }).stdout).toBe("");
+  });
+
+  it("a failed handoff write never blocks the stop and says so", () => {
+    const fileCwd = join(tmp, "not-a-dir");
+    writeFileSync(fileCwd, "x");
+    mkdirSync(ctx.leashHome, { recursive: true });
+    writeFileSync(join(ctx.leashHome, "handoffs"), "blocked");
+    cwd = fileCwd;
+    prompt("go");
+    spend(2.5);
+    const r = pre();
+    expect(r.json?.continue).toBe(false);
+    expect(r.json?.stopReason).toContain("Handoff: (not written: ");
+    expect(task()?.outcome).toBe("stopped-budget");
+    expect(readFileSync(join(ctx.leashHome, "errors.log"), "utf8")).toContain("handoff failed");
+  });
+
+  it("#budget new after a budget stop starts a fresh task and allows the next call", () => {
+    prompt("go");
+    spend(2.5);
+    pre();
+    const oldId = task()?.id;
+    const p = prompt("#budget new");
+    expect(p.json?.systemMessage).toBeUndefined();
+    expect(task()?.id).not.toBe(oldId);
+    expect(pre().stdout).toBe("");
+  });
+
+  it("after a loop stop a plain prompt says the loop history was cleared", () => {
+    prompt("#budget off");
+    const same = { command: "same" };
+    for (let i = 0; i < 5; i++) pre("Bash", same);
+    expect(task()?.outcome).toBe("stopped-loop");
+    const p = prompt("try again");
+    expect(p.json?.systemMessage).toBe(
+      "spend-leash: continuing the task after a loop stop; loop history cleared.",
+    );
+    expect(pre("Bash", same).stdout).toBe("");
+  });
+
+  it("plan-% budget stop uses the plan copy", () => {
+    prompt("#budget 10%");
+    snap(50);
+    expect(pre().stdout).toBe("");
+    snap(61);
+    const r = pre();
+    expect(r.json?.stopReason).toMatch(
+      /^spend-leash: task plan budget 10% of the 5-hour window reached \(11% used, \$0\.00\)\. Handoff: .+\. Reply "#budget 15%" to continue this task or "#budget new" to start fresh\.$/,
+    );
+    expect(task()?.outcome).toBe("stopped-budget");
+  });
+
+  it("a Bash PostToolUse with a non-zero exit counts as a failure", () => {
+    prompt("go");
+    const input = { command: "npm test" };
+    pre("Bash", input);
+    run({
+      ...base(),
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_input: input,
+      tool_response: { exit_code: 1 },
+    });
+    // 2 calls + 1 failure = 3 -> warn already on the second call
+    expect(pre("Bash", input).json?.hookSpecificOutput.additionalContext).toContain("3 times");
+  });
+
+  it("a subagent hook alone crossing warnAt warns", () => {
+    prompt("go");
+    spend(1.7);
+    const sub = join(tmp, "agent-9.jsonl");
+    writeFileSync(sub, "");
+    const r = pre("Bash", { command: "ls" }, { agent_id: "a9", transcript_path: sub });
+    expect(r.json?.hookSpecificOutput.additionalContext).toContain("85% of this task's budget");
+  });
+
+  it("without the session lock it decides and hands off but writes no shared state", () => {
+    prompt("go");
+    const before = readFileSync(join(ctx.leashHome, "sessions", `${SID}.json`), "utf8");
+    mkdirSync(join(ctx.leashHome, "sessions", `${SID}.lock`));
+    spend(2.5);
+    const r = pre();
+    expect(r.json?.continue).toBe(false);
+    expect(r.json?.stopReason).not.toContain("<HANDOFF>");
+    expect(readFileSync(join(ctx.leashHome, "sessions", `${SID}.json`), "utf8")).toBe(before);
+    const stop = run({ ...base(), hook_event_name: "Stop" });
+    expect(stop.stdout).toBe("");
+    expect(ledger()).toEqual([]);
+  });
+});
+
+describe("PostToolBatch", () => {
+  const batch = () => run({ ...base(), hook_event_name: "PostToolBatch" });
+
+  it("is silent under budget", () => {
+    prompt("go");
+    spend(0.2);
+    expect(batch().stdout).toBe("");
+  });
+
+  it("warns once when crossing warnAt", () => {
+    prompt("go");
+    spend(1.7);
+    const r = batch();
+    expect(r.json?.hookSpecificOutput.hookEventName).toBe("PostToolBatch");
+    expect(r.json?.hookSpecificOutput.additionalContext).toContain("85% of this task's budget");
+    expect(batch().stdout).toBe("");
+  });
+
+  it("stops on a plan window at stopAtPct with the batch shape", () => {
+    prompt("go");
+    snap(96);
+    const r = batch();
+    expect(r.json?.continue).toBe(false);
+    expect(r.json?.decision).toBe("block");
+    expect(r.json?.reason).toContain("5-hour plan window at 96%");
+    expect(task()?.outcome).toBe("stopped-plan");
   });
 });
 

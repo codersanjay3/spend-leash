@@ -76,7 +76,7 @@ export function runEngine(ctx: Ctx, input: HookInput): HookResult {
   if (!HANDLED.has(event) || !input.session_id) return empty;
   const sid = input.session_id;
 
-  return withSessionLock(ctx, sid, () => {
+  return withSessionLock(ctx, sid, (held) => {
     const cwd = input.cwd || process.cwd();
     const now = ctx.now();
     const { config } = loadConfig(ctx, cwd);
@@ -84,13 +84,16 @@ export function runEngine(ctx: Ctx, input: HookInput): HookResult {
     const loaded = readSessionChecked(ctx, sid);
     if (loaded.corrupt) {
       appendError(ctx, `session ${sid}: state file ${loaded.corrupt}; starting fresh`);
-      if (config.failClosed && event === "PreToolUse") {
-        writeSession(ctx, loaded.state);
+      if (config.failClosed && (event === "PreToolUse" || event === "PostToolBatch")) {
+        // Keep denying (the bad file stays) until the next UserPromptSubmit rewrites the state.
         const msg = "spend-leash: internal error (failClosed)";
         return { stdout: JSON.stringify(stopOutput(event, msg)), stderr: "", code: 0 };
       }
     }
     let state = loaded.state;
+    // Without the lock we stay read-only (decide and hand off, but never write shared state);
+    // under failClosed a corrupt file is only rewritten by the next UserPromptSubmit.
+    const mayWrite = held && !(loaded.corrupt && config.failClosed && event !== "UserPromptSubmit");
 
     const transcript = mainTranscript(input);
     let spendUsd = 0;
@@ -147,6 +150,8 @@ export function runEngine(ctx: Ctx, input: HookInput): HookResult {
           appendError(ctx, `handoff failed: ${short(err)}`);
           handoffText = `(not written: ${short(err)})`;
         }
+      } else if (!mayWrite) {
+        return;
       } else if (e.kind === "ledger") {
         const line = { ...e.line, reason: subst(e.line.reason, handoffText ?? "(not written)") };
         try {
@@ -174,7 +179,7 @@ export function runEngine(ctx: Ctx, input: HookInput): HookResult {
     if (handoffText !== undefined && next.task?.reason) {
       next.task.reason = subst(next.task.reason, handoffText);
     }
-    writeSession(ctx, next);
+    if (mayWrite) writeSession(ctx, next);
     return { stdout, stderr: "", code: 0 };
   });
 }

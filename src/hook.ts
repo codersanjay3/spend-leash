@@ -40,7 +40,7 @@ function failure(event: string, msg: string): HookResult {
   try {
     appendError(makeCtx(), `hook ${event || "?"}: ${msg}`);
   } catch {}
-  if (event === "PreToolUse" && failClosedOn()) {
+  if ((event === "PreToolUse" || event === "PostToolBatch") && failClosedOn()) {
     const m = "spend-leash: internal error (failClosed)";
     return { stdout: JSON.stringify(stopOutput(event, m)), stderr: "", code: 0 };
   }

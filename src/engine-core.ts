@@ -117,9 +117,13 @@ function onPrompt(state: SessionState, input: HookInput, env: StepEnv): StepResu
   let context: string | undefined;
 
   if (prev && t && prev.id === t.id && isStop(prev.outcome) && (!directive || isStop(t.outcome))) {
-    const spent = Math.max(0, env.spendUsd - t.baseUsd);
-    const ofLimit = t.limitUsd !== null ? ` of ${usd(t.limitUsd)}` : "";
-    context = `spend-leash: continuing the stopped task (${usd(spent)}${ofLimit}). Use "#budget +$N" for more or "#budget new" to start fresh.`;
+    if (prev.outcome === "stopped-loop") {
+      context = "spend-leash: continuing the task after a loop stop; loop history cleared.";
+    } else {
+      const spent = Math.max(0, env.spendUsd - t.baseUsd);
+      const ofLimit = t.limitUsd !== null ? ` of ${usd(t.limitUsd)}` : "";
+      context = `spend-leash: continuing the stopped task (${usd(spent)}${ofLimit}). Use "#budget +$N" for more or "#budget new" to start fresh.`;
+    }
     messages.push(context);
   }
 
@@ -140,7 +144,7 @@ function onPrompt(state: SessionState, input: HookInput, env: StepEnv): StepResu
   }
 
   if (messages.length === 0) return { state: s, effects: [] };
-  const systemMessage = messages.join(" ");
+  const systemMessage = messages.join("\n");
   const output = context
     ? ctxOut("UserPromptSubmit", context, { systemMessage })
     : { systemMessage };
@@ -195,7 +199,7 @@ function check(
     t.limitPlanPct !== null && spend.planPct !== null && spend.planPct >= t.limitPlanPct;
   if (usdHit || planHit) {
     if (usdHit && t.limitUsd !== null) {
-      const msg = `spend-leash: task budget ${usd(t.limitUsd)} reached (${usd(spend.usd)}). Handoff: ${hand}. Reply "#budget +$${t.limitUsd}" to continue this task or "#budget new" to start fresh.`;
+      const msg = `spend-leash: task budget ${usd(t.limitUsd)} reached (${usd(spend.usd)}). Handoff: ${hand}. Reply "#budget +${usd(t.limitUsd)}" to continue this task or "#budget new" to start fresh.`;
       return stop("stopped-budget", "budget", msg, `${usd(spend.usd)} of ${usd(t.limitUsd)}`);
     }
     const lim = t.limitPlanPct ?? 0;
