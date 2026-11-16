@@ -107,7 +107,7 @@ export function readSession(ctx: Ctx, sessionId: string): SessionState {
   }
 }
 
-function atomicWrite(dir: string, target: string, data: string): void {
+export function atomicWrite(dir: string, target: string, data: string): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tmp = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   try {
