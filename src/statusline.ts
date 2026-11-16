@@ -6,18 +6,27 @@ import { makeCtx } from "./paths.js";
 import { appendError, readSession, writeSnapshot } from "./state.js";
 import { ownLine, snapshotFrom } from "./statusline-core.js";
 
-const TIMEOUT_MS = 2000;
+const TOTAL_MS = 2000;
 
+const STDIN_WAIT_MS = 500;
+const MIN_RUN_MS = 300;
+
+/** Resolves on end/error, or after STDIN_WAIT_MS with whatever arrived so far. */
 function readStdinBytes(): Promise<Buffer> {
   return new Promise((res) => {
     const chunks: Buffer[] = [];
+    const done = () => {
+      clearTimeout(t);
+      res(Buffer.concat(chunks));
+    };
+    const t = setTimeout(done, STDIN_WAIT_MS);
     process.stdin.on("data", (c: Buffer) => chunks.push(c));
-    process.stdin.on("end", () => res(Buffer.concat(chunks)));
-    process.stdin.on("error", () => res(Buffer.concat(chunks)));
+    process.stdin.on("end", done);
+    process.stdin.on("error", done);
   });
 }
 
-function runOriginal(command: string, cwd: string, stdin: Buffer): Promise<void> {
+function runOriginal(command: string, cwd: string, stdin: Buffer, budgetMs: number): Promise<void> {
   return new Promise((done) => {
     const posix = process.platform !== "win32";
     const out: Buffer[] = [];
@@ -51,7 +60,7 @@ function runOriginal(command: string, cwd: string, stdin: Buffer): Promise<void>
         else child.kill("SIGKILL");
       } catch {}
       finish();
-    }, TIMEOUT_MS);
+    }, budgetMs);
   });
 }
 
@@ -66,6 +75,7 @@ function originalCommand(leashHome: string): string | undefined {
 }
 
 async function main(): Promise<void> {
+  const start = Date.now();
   const bytes = await readStdinBytes();
   const ctx = makeCtx();
   let input: unknown;
@@ -86,14 +96,20 @@ async function main(): Promise<void> {
   }
   const original = originalCommand(ctx.leashHome);
   if (original) {
-    await runOriginal(original, typeof obj.cwd === "string" ? obj.cwd : process.cwd(), bytes);
+    const budget = Math.max(MIN_RUN_MS, TOTAL_MS - (Date.now() - start));
+    await runOriginal(
+      original,
+      typeof obj.cwd === "string" ? obj.cwd : process.cwd(),
+      bytes,
+      budget,
+    );
     return;
   }
   let line = "spend-leash";
   try {
     line = ownLine(sessionId ? readSession(ctx, sessionId) : undefined, snap);
   } catch {}
-  process.stdout.write(`${line}\n`);
+  await new Promise<void>((r) => process.stdout.write(`${line}\n`, () => r()));
 }
 
 main()

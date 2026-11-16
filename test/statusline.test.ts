@@ -1,5 +1,13 @@
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -187,14 +195,58 @@ describe("dist/statusline.mjs", () => {
     expect(run(FULL).stdout.toString()).toBe("spend-leash · 5h 37%\n");
   });
 
-  it("snapshot failure is swallowed and does not change the output", () => {
-    // SPEND_LEASH_HOME is a file, so mkdir of sessions/ fails.
-    const blocker = join(tmp, "blocker");
-    writeFileSync(blocker, "x");
-    env.SPEND_LEASH_HOME = blocker;
+  it("snapshot failure is swallowed, logged, and does not change the original's output", () => {
+    const home = env.SPEND_LEASH_HOME as string;
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "sessions"), "x"); // a FILE where the dir should be
+    setOriginal(`"${process.execPath}" -e "process.stdout.write('orig')"`);
     const r = run(FULL);
     expect(r.status).toBe(0);
-    expect(r.stdout.toString()).toBe("spend-leash · 5h 37%\n");
-    expect(existsSync(join(blocker, "sessions"))).toBe(false);
+    expect(r.stdout.toString()).toBe("orig");
+    expect(readFileSync(join(home, "errors.log"), "utf8")).toMatch(
+      /^\d{4}-\d\d-\d\dT.*Z statusline: /m,
+    );
+  });
+
+  it("path-traversal session_id writes nothing outside sessions/", () => {
+    const r = run({ ...FULL, session_id: "../../evil" });
+    expect(r.status).toBe(0);
+    const home = env.SPEND_LEASH_HOME as string;
+    expect(existsSync(join(tmp, "evil.statusline.json"))).toBe(false);
+    expect(existsSync(join(home, "..", "evil.statusline.json"))).toBe(false);
+    expect(readdirSync(join(home, "sessions")).length).toBe(1);
+    expect(readdirSync(home)).toEqual(["sessions"]);
+  });
+
+  it("stdin that never closes: bounded, exit 0, original output printed", async () => {
+    setOriginal(`"${process.execPath}" -e "process.stdout.write('orig')"`);
+    const t0 = Date.now();
+    const r = await new Promise<{ code: number | null; out: string }>((res) => {
+      const c = spawn(process.execPath, [bin], { env, stdio: ["pipe", "pipe", "ignore"] });
+      let out = "";
+      c.stdout.on("data", (d) => {
+        out += d;
+      });
+      c.on("close", (code) => res({ code, out }));
+      c.stdin.on("error", () => {});
+      c.stdin.write(JSON.stringify(FULL)); // never ended
+    });
+    expect(Date.now() - t0).toBeLessThan(2600);
+    expect(r.code).toBe(0);
+    expect(r.out).toBe("orig");
+    expect(snapshot()?.costUsd).toBe(0.42);
+  });
+
+  it("stdin never closes and no original: prints ownLine", async () => {
+    const r = await new Promise<{ code: number | null; out: string }>((res) => {
+      const c = spawn(process.execPath, [bin], { env, stdio: ["pipe", "pipe", "ignore"] });
+      let out = "";
+      c.stdout.on("data", (d) => {
+        out += d;
+      });
+      c.on("close", (code) => res({ code, out }));
+    });
+    expect(r.code).toBe(0);
+    expect(r.out).toBe("spend-leash\n");
   });
 });
