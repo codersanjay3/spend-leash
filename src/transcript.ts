@@ -5,6 +5,7 @@ import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { addUsage, costUsd, type Price, priceFor, type UsageTotals, ZERO } from "./pricing.js";
 import { usageFromLine } from "./transcript-parse.js";
+import { isObj } from "./util.js";
 
 export interface FileCursor {
   offset: number;
@@ -63,10 +64,6 @@ function readHead(path: string, n: number): string {
 }
 
 const USAGE_KEYS = ["input", "output", "cacheWrite5m", "cacheWrite1h", "cacheRead"] as const;
-
-function isObj(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 function dict<T>(): Record<string, T> {
   return Object.create(null) as Record<string, T>;

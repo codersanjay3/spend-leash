@@ -6,9 +6,10 @@ import { HANDOFF_PLACEHOLDER, type StepEnv, step } from "../src/engine-core.js";
 import { lastTodosFrom, recentCallsFrom, renderHandoff } from "../src/handoff-render.js";
 import { addUsage, costUsd, priceFor, type UsageTotals, ZERO } from "../src/pricing.js";
 import { argsPreview } from "../src/redact.js";
-import type { SessionState, Snapshot } from "../src/tasks.js";
-import { usageFromLine } from "../src/transcript-parse.js";
+import { isFresh, type SessionState, type Snapshot } from "../src/tasks.js";
+import { usageFromRecord } from "../src/transcript-parse.js";
 import type { HookInput } from "../src/types.js";
+import { isObj } from "../src/util.js";
 
 export interface ScenarioStep {
   input: HookInput;
@@ -97,10 +98,6 @@ export function stamp(d: Date): string {
 
 const subst = (text: string, value: string): string => text.split(HANDOFF_PLACEHOLDER).join(value);
 
-function isObj(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
 function initialState(): SessionState {
   return {
     sessionId: SIM_SESSION,
@@ -171,15 +168,17 @@ export function simulate(scenario: Scenario, config: Config = DEFAULT_CONFIG): S
   scenario.steps.forEach((s, i) => {
     const now = new Date(SIM_START + i * STEP_MS);
     for (const line of s.transcript ?? []) {
-      const u = usageFromLine(line);
+      let rec: unknown;
+      try {
+        rec = JSON.parse(line);
+      } catch {
+        continue; // a bad line is skipped, as the real reader does
+      }
+      records.push(rec);
+      const u = usageFromRecord(rec);
       if (u && !(u.id && seen.has(u.id))) {
         if (u.id) seen.add(u.id);
         byModel.set(u.model, addUsage(byModel.get(u.model) ?? ZERO, u.usage));
-      }
-      try {
-        records.push(JSON.parse(line));
-      } catch {
-        // a bad line is skipped, as the real reader does
       }
     }
     if (s.snapshot) snapshot = { ...s.snapshot, at: now.toISOString() };
@@ -240,10 +239,7 @@ export function simulate(scenario: Scenario, config: Config = DEFAULT_CONFIG): S
       ...(input.tool_name ? { tool: input.tool_name } : {}),
       ...(summarise(input) ? { summary: summarise(input) as string } : {}),
       usd: Math.max(0, total.usd - (t?.baseUsd ?? 0)),
-      planPct:
-        snapshot && now.getTime() - Date.parse(snapshot.at) < 10 * 60_000
-          ? (snapshot.fiveHourPct ?? null)
-          : null,
+      planPct: snapshot && isFresh(snapshot, now) ? (snapshot.fiveHourPct ?? null) : null,
       verdict,
       ...(message !== undefined ? { message } : {}),
     });
@@ -273,6 +269,7 @@ export function configFrom(c: ConfigInput): { config: Config; notes: string[] } 
 // ---------- pasted transcripts ----------
 
 export const MAX_PASTE_CHARS = 4_000_000;
+export const MAX_PASTE_STEPS = 2_000;
 
 function userText(rec: Record<string, unknown>): string | undefined {
   if (rec.isMeta === true || !isObj(rec.message)) return undefined;
@@ -287,7 +284,11 @@ function userText(rec: Record<string, unknown>): string | undefined {
 }
 
 /** Turns a Claude Code transcript JSONL into scenario steps. Never throws. */
-export function scenarioFromTranscript(text: string): { scenario?: Scenario; error?: string } {
+export function scenarioFromTranscript(text: string): {
+  scenario?: Scenario;
+  error?: string;
+  truncatedFrom?: number;
+} {
   try {
     if (!text.trim()) return { error: "Paste a Claude Code transcript (JSONL) to replay it." };
     if (text.length > MAX_PASTE_CHARS) {
@@ -297,6 +298,8 @@ export function scenarioFromTranscript(text: string): { scenario?: Scenario; err
     let pending: string[] = [];
     let valid = 0;
     let bad = 0;
+    let total = 0;
+    const room = () => steps.length < MAX_PASTE_STEPS;
     for (const raw of text.split("\n")) {
       const line = raw.trim();
       if (!line) continue;
@@ -315,18 +318,23 @@ export function scenarioFromTranscript(text: string): { scenario?: Scenario; err
       if (rec.type === "user") {
         const prompt = userText(rec);
         if (prompt !== undefined) {
-          steps.push({
-            input: simInput("UserPromptSubmit", { prompt }),
-            ...(pending.length ? { transcript: pending } : {}),
-          });
-          pending = [];
+          total++;
+          if (room()) {
+            steps.push({
+              input: simInput("UserPromptSubmit", { prompt }),
+              ...(pending.length ? { transcript: pending } : {}),
+            });
+            pending = [];
+          }
         }
       } else if (rec.type === "assistant") {
-        pending.push(line);
+        if (room()) pending.push(line);
         const content = isObj(rec.message) ? rec.message.content : undefined;
         if (!Array.isArray(content)) continue;
         for (const b of content) {
           if (!isObj(b) || b.type !== "tool_use" || typeof b.name !== "string") continue;
+          total++;
+          if (!room()) continue;
           steps.push({
             input: simInput("PreToolUse", { tool_name: b.name, tool_input: b.input }),
             ...(pending.length ? { transcript: pending } : {}),
@@ -340,17 +348,20 @@ export function scenarioFromTranscript(text: string): { scenario?: Scenario; err
         error: `None of the ${bad} line${bad === 1 ? "" : "s"} parsed as JSON. Paste a Claude Code transcript: one JSON object per line.`,
       };
     }
-    if (pending.length) steps.push({ input: simInput("Stop"), transcript: pending });
+    if (pending.length && room()) steps.push({ input: simInput("Stop"), transcript: pending });
     if (steps.every((s) => s.input.hook_event_name === "Stop") || steps.length === 0) {
       return { error: "No prompts or tool calls found in that transcript." };
     }
     const skipped = bad ? ` (${bad} unreadable line${bad === 1 ? "" : "s"} skipped)` : "";
+    const cut = total > MAX_PASTE_STEPS;
+    const note = cut ? ` Showing the first 2,000 of ${total} calls.` : "";
     return {
       scenario: {
         name: "Pasted transcript",
-        description: `${steps.length} steps replayed from your transcript${skipped}.`,
+        description: `${steps.length} steps replayed from your transcript${skipped}.${note}`,
         steps,
       },
+      ...(cut ? { truncatedFrom: total } : {}),
     };
   } catch {
     return {

@@ -1,6 +1,7 @@
 // Pure handoff markdown renderer: no node:* imports (the browser simulator bundles this).
 import { argsPreview, redact } from "./redact.js";
 import type { Task } from "./tasks.js";
+import { isObj } from "./util.js";
 
 export interface HandoffData {
   reason: string;
@@ -94,10 +95,6 @@ interface ToolUse {
   id?: string;
   name: string;
   input: unknown;
-}
-
-function isObj(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /** tool_use blocks of assistant messages in parsed transcript records, oldest first, deduped by id. */

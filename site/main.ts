@@ -154,7 +154,13 @@ pasteChip.setAttribute("aria-pressed", "false");
 pasteChip.addEventListener("click", () => pick("paste"));
 chipsEl.append(pasteChip);
 
-for (const i of Object.values(inputs)) i.addEventListener("input", render);
+let timer: ReturnType<typeof setTimeout> | undefined;
+for (const i of Object.values(inputs)) {
+  i.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(render, 150);
+  });
+}
 scrub.addEventListener("input", () => {
   upTo = Number(scrub.value);
   render();

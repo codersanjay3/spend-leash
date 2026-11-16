@@ -1,6 +1,7 @@
 // Pure config model + merge logic: no node:fs, so the browser simulator can bundle it.
 // File reading lives in config-load.ts.
 import type { Price } from "./pricing.js";
+import { isObj } from "./util.js";
 
 export interface Config {
   task: { usd: number | null; planPct: number | null; warnAt: number };
@@ -24,10 +25,6 @@ const PROJECT_FILE = ".spend-leash.json";
 const PRICE_KEYS = ["input", "output", "cacheWrite5m", "cacheWrite1h", "cacheRead"] as const;
 
 type Obj = Record<string, unknown>;
-
-function isObj(v: unknown): v is Obj {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 function clone(c: Config): Config {
   return {

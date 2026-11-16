@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { type Ctx, errorsLog, sessionDir } from "./paths.js";
 import type { SessionState, Snapshot, Task } from "./tasks.js";
 import type { SpendCache } from "./transcript.js";
+import { isObj } from "./util.js";
 
 export { isFresh } from "./tasks.js";
 
@@ -27,10 +28,6 @@ function safe(sessionId: string): string {
 
 const file = (ctx: Ctx, id: string, suffix: string) =>
   join(sessionDir(ctx, id), `${safe(id)}${suffix}`);
-
-function isObj(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 function defaultState(sessionId: string): SessionState {
   return {

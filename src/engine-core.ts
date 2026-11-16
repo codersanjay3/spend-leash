@@ -14,6 +14,7 @@ import {
   taskSpend,
 } from "./tasks.js";
 import type { HookInput, LedgerLine } from "./types.js";
+import { isObj } from "./util.js";
 
 /** Replaced by engine.ts with the written handoff path (or a "(not written: ...)" note). */
 export const HANDOFF_PLACEHOLDER = "<HANDOFF>";
@@ -284,10 +285,6 @@ function ledgerEffect(
     reason,
   };
   return [{ kind: "ledger", line }];
-}
-
-function isObj(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 function failedBash(input: HookInput): boolean {

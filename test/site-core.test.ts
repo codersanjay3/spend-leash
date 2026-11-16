@@ -63,7 +63,9 @@ function realRun(name: string) {
     out.push(j);
     const dir = join(cwd, ".spend-leash", "handoffs");
     if (existsSync(dir)) {
-      const f = readdirSync(dir).sort()[0];
+      const files = readdirSync(dir);
+      expect(files.length).toBeLessThanOrEqual(1);
+      const f = files[0];
       if (f) handoffFile = join(dir, f);
     }
   });
@@ -195,6 +197,21 @@ describe("pasted transcripts", () => {
     }
     expect(scenarioFromTranscript("hello").error).toMatch(/parsed as JSON/);
     expect(scenarioFromTranscript("x".repeat(5_000_000)).error).toMatch(/over 4 MB/);
+  });
+
+  it("caps a huge paste at 2,000 steps, reports it, and simulates quickly", () => {
+    const lines = [user("go")];
+    for (let i = 0; i < 5000; i++) {
+      lines.push(asst(`m${i}`, "Read", { file_path: `/f${i}` }, 10));
+    }
+    const r = scenarioFromTranscript(lines.join("\n"));
+    expect(r.scenario?.steps).toHaveLength(2000);
+    expect(r.truncatedFrom).toBe(5001);
+    expect(r.scenario?.description).toContain("Showing the first 2,000 of 5001 calls.");
+    const t = Date.now();
+    const sim = simulate(r.scenario as NonNullable<typeof r.scenario>);
+    expect(Date.now() - t).toBeLessThan(1000);
+    expect(sim.steps).toHaveLength(2000);
   });
 
   it("simulate survives odd inputs", () => {

@@ -1,9 +1,6 @@
 // Pure helpers for the status-line wrapper (no I/O).
 import type { SessionState, Snapshot } from "./tasks.js";
-
-function isObj(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
+import { isObj } from "./util.js";
 
 const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 

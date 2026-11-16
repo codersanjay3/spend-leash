@@ -41,6 +41,13 @@ export function usageFromLine(
   } catch {
     return undefined;
   }
+  return usageFromRecord(obj);
+}
+
+/** Same as usageFromLine for an already-parsed record. */
+export function usageFromRecord(
+  obj: unknown,
+): { id: string; model: string; usage: UsageTotals } | undefined {
   if (!obj || typeof obj !== "object") return undefined;
   const rec = obj as Record<string, unknown>;
   if (rec.type !== "assistant") return undefined;
