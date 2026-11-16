@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { Ctx } from "./paths.js";
 import {
@@ -159,10 +159,18 @@ class FileSet {
 export function effectiveStatusLine(
   ctx: Ctx,
   project: string,
+  notes?: string[],
 ): { path: string; value: unknown } | undefined {
   for (const scope of ["local", "project", "user"] as const) {
     const path = settingsPathFor(scope, ctx.home, project);
-    const { settings } = readSettingsWithText(path);
+    let settings: Settings;
+    try {
+      settings = readSettingsWithText(path).settings;
+    } catch {
+      // a file we only read to find precedence must not block the install
+      notes?.push(`could not read ${path}; status line precedence not checked`);
+      continue;
+    }
     if (settings.statusLine !== undefined) return { path, value: settings.statusLine };
   }
   return undefined;
@@ -202,7 +210,7 @@ export function planInstall(ctx: Ctx, opts: { scope: Scope; project: string }): 
   // status line
   const wrapperCmd = statusLineCommand(ctx.leashHome);
   let statusLine = existing?.statusLine;
-  const eff = effectiveStatusLine(ctx, opts.project);
+  const eff = effectiveStatusLine(ctx, opts.project, notes);
   const effVal = eff?.value;
   const isOurs = isObj(effVal) && effVal.type === "command" && effVal.command === wrapperCmd;
   if (!isOurs) {
@@ -246,8 +254,20 @@ export function planInstall(ctx: Ctx, opts: { scope: Scope; project: string }): 
   return { changes, record, notes };
 }
 
+/** Throws (writing nothing) when any planned file changed since it was read. */
+function verifyUnchanged(changes: Change[]): void {
+  for (const c of changes) {
+    const { settings } = readSettingsWithText(c.path);
+    if (!same(settings, c.before)) {
+      throw new Error(`spend-leash: settings changed since plan (${c.path}); re-run`);
+    }
+  }
+}
+
 export function applyInstall(ctx: Ctx, plan: InstallPlan): void {
   if (plan.changes.length === 0) return; // idempotent: never clobber the existing record
+  verifyUnchanged(plan.changes);
+  mkdirSync(ctx.leashHome, { recursive: true, mode: 0o700 });
   // record first, so a failed settings write still leaves a way back
   writeJsonAtomic(recordPath(ctx), plan.record);
   if (plan.record.statusLine) {
@@ -297,7 +317,10 @@ export function planUninstall(ctx: Ctx, record: InstallRecord): UninstallPlan {
     if (same(f.after.statusLine, sl.wrapper)) {
       if (sl.original === null) delete f.after.statusLine;
       else f.after.statusLine = structuredClone(sl.original);
-    } else if (f.after.statusLine !== undefined) {
+    } else if (
+      f.after.statusLine !== undefined &&
+      !(sl.original !== null && same(f.after.statusLine, sl.original))
+    ) {
       warnings.push(
         `status line in ${sl.settingsPath} was changed after install; leaving your version in place`,
       );
@@ -331,6 +354,7 @@ export function planUninstall(ctx: Ctx, record: InstallRecord): UninstallPlan {
 }
 
 export function applyUninstall(ctx: Ctx, plan: UninstallPlan): void {
+  verifyUnchanged(plan.changes);
   for (const c of plan.changes) {
     backupFile(c.path, ctx.now());
     if (c.remove) unlinkSync(c.path);

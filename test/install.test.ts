@@ -260,7 +260,136 @@ describe("uninstall", () => {
   });
 });
 
+const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+
+describe("stale plans and failures", () => {
+  it("install: refuses to apply when the file changed since plan", () => {
+    put(userFile(), '{"a":1}\n');
+    const plan = planInstall(ctx, { scope: "user", project: proj });
+    put(userFile(), '{"a":1,"edited":true}\n');
+    expect(() => applyInstall(ctx, plan)).toThrow(/settings changed since plan .*re-run/);
+    expect(rd(userFile())).toBe('{"a":1,"edited":true}\n');
+    expect(existsSync(join(ctx.leashHome, "install.json"))).toBe(false);
+  });
+
+  it("uninstall: refuses to apply when the file changed since plan", () => {
+    init();
+    const rec = readInstallRecord(ctx);
+    if (!rec) throw new Error("no record");
+    const plan = planUninstall(ctx, rec);
+    const s = json(userFile());
+    s.theme = "dark";
+    put(userFile(), JSON.stringify(s));
+    const edited = rd(userFile());
+    expect(() => applyUninstall(ctx, plan)).toThrow(/settings changed since plan/);
+    expect(rd(userFile())).toBe(edited);
+    expect(existsSync(join(ctx.leashHome, "install.json"))).toBe(true);
+  });
+
+  it("checks every file before writing any", () => {
+    put(userFile(), "{}\n");
+    put(localFile(), '{"statusLine":{"type":"command","command":"l.sh"}}\n');
+    const plan = planInstall(ctx, { scope: "user", project: proj });
+    put(localFile(), '{"statusLine":{"type":"command","command":"changed.sh"}}\n');
+    expect(() => applyInstall(ctx, plan)).toThrow(/changed since plan/);
+    expect(rd(userFile())).toBe("{}\n");
+  });
+
+  it.skipIf(!posix || isRoot)(
+    "a failing second write leaves a record; uninstall recovers cleanly",
+    () => {
+      put(userFile(), '{"model":"x"}\n');
+      const l = '{"statusLine":{"type":"command","command":"l.sh"}}\n';
+      put(localFile(), l);
+      chmodSync(join(proj, ".claude"), 0o500);
+      try {
+        expect(() => init()).toThrow();
+      } finally {
+        chmodSync(join(proj, ".claude"), 0o700);
+      }
+      expect(existsSync(join(ctx.leashHome, "install.json"))).toBe(true);
+      expect(json(userFile()).hooks.Stop).toBeDefined();
+      expect(rd(localFile())).toBe(l);
+      const plan = uninstall();
+      expect(plan.warnings).toEqual([]);
+      expect(rd(userFile())).toBe('{"model":"x"}\n');
+      expect(rd(localFile())).toBe(l);
+      expect(existsSync(join(ctx.leashHome, "install.json"))).toBe(false);
+    },
+  );
+});
+
+describe("non-target and unusual files", () => {
+  it("skips an invalid non-target file with a note", () => {
+    put(localFile(), "{broken");
+    const plan = planInstall(ctx, { scope: "user", project: proj });
+    expect(plan.notes).toContain(
+      `could not read ${localFile()}; status line precedence not checked`,
+    );
+    applyInstall(ctx, plan);
+    expect(rd(localFile())).toBe("{broken");
+    expect(json(userFile()).hooks.Stop).toBeDefined();
+  });
+
+  it.skipIf(!posix)("a directory in place of a non-target file is skipped with a note", () => {
+    mkdirSync(localFile(), { recursive: true });
+    const plan = planInstall(ctx, { scope: "user", project: proj });
+    expect(plan.notes.join(" ")).toMatch(/could not read .*settings\.local\.json/);
+  });
+
+  it.skipIf(!posix)("wraps a statusLine in a symlinked non-target file through the link", () => {
+    const real = join(root, "dot", "local.json");
+    put(real, '{"statusLine":{"type":"command","command":"l.sh"}}\n');
+    mkdirSync(join(proj, ".claude"), { recursive: true });
+    symlinkSync(real, localFile());
+    init();
+    expect(lstatSync(localFile()).isSymbolicLink()).toBe(true);
+    expect(json(real).statusLine.command).toBe(statusLineCommand(ctx.leashHome));
+    uninstall();
+    expect(lstatSync(localFile()).isSymbolicLink()).toBe(true);
+    expect(rd(real)).toBe('{"statusLine":{"type":"command","command":"l.sh"}}\n');
+  });
+
+  it.skipIf(!posix)("refuses a dangling symlink settings path", () => {
+    mkdirSync(join(ctx.home, ".claude"), { recursive: true });
+    symlinkSync(join(root, "nowhere.json"), userFile());
+    expect(() => init()).toThrow(/dangling symlink/);
+    expect(lstatSync(userFile()).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(root, "nowhere.json"))).toBe(false);
+  });
+
+  for (const kind of ["local", "project"] as const) {
+    it(`leaves a non-command statusLine in the ${kind} file untouched with a note`, () => {
+      const f = kind === "local" ? localFile() : join(proj, ".claude", "settings.json");
+      const text = '{"statusLine":{"type":"static","text":"hi"}}\n';
+      put(f, text);
+      const plan = init();
+      expect(plan.notes).toContain("status line is not a command; plan-% budgets unavailable");
+      expect(rd(f)).toBe(text);
+      expect(json(userFile()).statusLine).toBeUndefined();
+      uninstall();
+      expect(rd(f)).toBe(text);
+    });
+  }
+
+  it.skipIf(!posix)("leashHome is 0700", () => {
+    init();
+    expect(statSync(ctx.leashHome).mode & 0o777).toBe(0o700);
+  });
+});
+
 describe("file handling", () => {
+  it("creates a backup before the uninstall write", () => {
+    put(userFile(), '{"model":"x"}\n');
+    init();
+    const installed = rd(userFile());
+    uninstall();
+    const baks = readdirSync(join(ctx.home, ".claude")).filter((f) =>
+      f.startsWith("settings.json.bak-"),
+    );
+    expect(baks.map((b) => rd(join(ctx.home, ".claude", b)))).toContain(installed);
+  });
+
   it("creates a backup before each write", () => {
     const u = '{"model":"x"}\n';
     put(userFile(), u);
@@ -277,22 +406,25 @@ describe("file handling", () => {
     expect(rd(join(ctx.home, ".claude", dirU[0] as string))).toBe(u);
   });
 
-  it.skipIf(!posix)("keeps a symlinked settings file a symlink and preserves mode 0600", () => {
-    const real = join(root, "dotfiles", "settings.json");
-    put(real, '{"model":"x"}\n');
-    chmodSync(real, 0o600);
-    mkdirSync(join(ctx.home, ".claude"), { recursive: true });
-    symlinkSync(real, userFile());
-    init();
-    expect(lstatSync(userFile()).isSymbolicLink()).toBe(true);
-    expect(json(real).hooks.Stop).toBeDefined();
-    expect(statSync(real).mode & 0o777).toBe(0o600);
-    const orig = '{"model":"x"}\n';
-    uninstall();
-    expect(lstatSync(userFile()).isSymbolicLink()).toBe(true);
-    expect(rd(real)).toBe(orig);
-    expect(statSync(real).mode & 0o777).toBe(0o600);
-  });
+  it.skipIf(!posix)(
+    "keeps a symlinked settings file a symlink, preserves 0600, and restores through the link",
+    () => {
+      const real = join(root, "dotfiles", "settings.json");
+      put(real, '{"model":"x"}\n');
+      chmodSync(real, 0o600);
+      mkdirSync(join(ctx.home, ".claude"), { recursive: true });
+      symlinkSync(real, userFile());
+      init();
+      expect(lstatSync(userFile()).isSymbolicLink()).toBe(true);
+      expect(json(real).hooks.Stop).toBeDefined();
+      expect(statSync(real).mode & 0o777).toBe(0o600);
+      const orig = '{"model":"x"}\n';
+      uninstall();
+      expect(lstatSync(userFile()).isSymbolicLink()).toBe(true);
+      expect(rd(real)).toBe(orig);
+      expect(statSync(real).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it.skipIf(!posix)("preserves a non-default mode", () => {
     put(userFile(), "{}\n");

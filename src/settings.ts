@@ -2,11 +2,13 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -40,9 +42,24 @@ export function settingsPathFor(scope: Scope, home: string, project: string): st
   }
 }
 
+function assertNotDangling(path: string): void {
+  let isLink = false;
+  try {
+    isLink = lstatSync(path).isSymbolicLink();
+  } catch {
+    /* does not exist at all */
+  }
+  if (isLink) {
+    throw new Error(`spend-leash: ${path} is a dangling symlink; refusing to replace it`);
+  }
+}
+
 /** Read a settings file. Missing -> {} with text null. Invalid content throws (never clobbered). */
 export function readSettingsWithText(path: string): { settings: Settings; text: string | null } {
-  if (!existsSync(path)) return { settings: {}, text: null };
+  if (!existsSync(path)) {
+    assertNotDangling(path);
+    return { settings: {}, text: null };
+  }
   const text = readFileSync(path, "utf8");
   const body = text.replace(/^﻿/, "");
   if (body.trim() === "") return { settings: {}, text };
@@ -88,6 +105,7 @@ export function canonicalPath(path: string): string {
  * symlinked settings.json stays a symlink) and keeps the original file mode; new files are 0600.
  */
 export function writeTextAtomic(path: string, text: string): void {
+  if (!existsSync(path)) assertNotDangling(path);
   const target = canonicalPath(path);
   mkdirSync(dirname(target), { recursive: true });
   let mode = 0o600;
@@ -97,9 +115,18 @@ export function writeTextAtomic(path: string, text: string): void {
     /* new file */
   }
   const tmp = `${target}.spend-leash.tmp-${process.pid}`;
-  writeFileSync(tmp, text, { mode });
-  chmodSync(tmp, mode); // writeFileSync's mode is filtered by the umask
-  renameSync(tmp, target);
+  try {
+    writeFileSync(tmp, text, { mode });
+    chmodSync(tmp, mode); // writeFileSync's mode is filtered by the umask
+    renameSync(tmp, target);
+  } catch (e) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* nothing to clean */
+    }
+    throw e;
+  }
 }
 
 export function writeJsonAtomic(path: string, value: unknown): void {
