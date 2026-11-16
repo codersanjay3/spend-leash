@@ -1,5 +1,6 @@
 // Per-session state files: sessions/<id>.json, <id>.statusline.json, and the <id>.lock mkdir lock.
 import {
+  appendFileSync,
   chmodSync,
   mkdirSync,
   readFileSync,
@@ -10,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { type Ctx, sessionDir } from "./paths.js";
+import { type Ctx, errorsLog, sessionDir } from "./paths.js";
 import type { SessionState, Snapshot, Task } from "./tasks.js";
 import type { SpendCache } from "./transcript.js";
 
@@ -106,14 +107,11 @@ export function readSession(ctx: Ctx, sessionId: string): SessionState {
   }
 }
 
-/** Atomic (temp file in the same dir + rename); dirs 0700, file 0600 on POSIX. */
-export function writeSession(ctx: Ctx, s: SessionState): void {
-  const dir = sessionDir(ctx, s.sessionId);
+function atomicWrite(dir: string, target: string, data: string): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const target = file(ctx, s.sessionId, ".json");
   const tmp = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   try {
-    writeFileSync(tmp, JSON.stringify(s), { mode: 0o600 });
+    writeFileSync(tmp, data, { mode: 0o600 });
     if (process.platform !== "win32") chmodSync(tmp, 0o600);
     renameSync(tmp, target);
   } catch (e) {
@@ -122,6 +120,30 @@ export function writeSession(ctx: Ctx, s: SessionState): void {
     } catch {}
     throw e;
   }
+}
+
+/** Atomic (temp file in the same dir + rename); dirs 0700, file 0600 on POSIX. */
+export function writeSession(ctx: Ctx, s: SessionState): void {
+  atomicWrite(sessionDir(ctx, s.sessionId), file(ctx, s.sessionId, ".json"), JSON.stringify(s));
+}
+
+/** Same atomic 0600 write as writeSession, for the status-line snapshot. */
+export function writeSnapshot(ctx: Ctx, sessionId: string, snap: Snapshot): void {
+  atomicWrite(
+    sessionDir(ctx, sessionId),
+    file(ctx, sessionId, ".statusline.json"),
+    JSON.stringify(snap),
+  );
+}
+
+/** Appends one `<iso> <msg>` line to errors.log; never throws. */
+export function appendError(ctx: Ctx, msg: string): void {
+  try {
+    mkdirSync(ctx.leashHome, { recursive: true, mode: 0o700 });
+    appendFileSync(errorsLog(ctx), `${ctx.now().toISOString()} ${msg.replace(/\s+/g, " ")}\n`, {
+      mode: 0o600,
+    });
+  } catch {}
 }
 
 function sleep(ms: number): void {
